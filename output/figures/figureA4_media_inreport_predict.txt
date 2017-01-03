@@ -1,0 +1,1 @@
+Predicted number of TIP-related stories given a country’s presence in the annual TIP report; mean predicted values of every observation in Model 4.1.1.

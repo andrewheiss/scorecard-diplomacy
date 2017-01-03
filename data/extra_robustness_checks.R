@@ -1,0 +1,225 @@
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(rvest)
+library(countrycode)
+library(stringr)
+library(WDI)
+
+# Load original data
+df.full <- readRDS(file.path(PROJHOME, "data", "processed",
+                             "df_complete.rds"))
+
+# Remove non-aid-eligible countries from models with aid in them
+# Aid eligible countries: https://www.oecd.org/dac/stats/historyofdaclistsofaidrecipientcountries.htm
+# http://stats.oecd.org/
+#
+oecd.dac <- read_csv(file.path(PROJHOME, "data", "original",
+                               "oecd_dac_countries.csv")) %>%
+  mutate(ccode = countrycode(country, "country.name", "cown"),
+         ccode = ifelse(country == "Serbia", 555, ccode),
+         dac_eligible = TRUE)
+
+
+# Control for US military aid
+# http://www.securityassistance.org/data/country/military/country/1996/2017/is_all/Global
+military.aid <- read_csv(file.path(PROJHOME, "data", "original",
+                                   "Military and Police Aid by Country.csv")) %>%
+  select(-`year (Year)`) %>%
+  filter(!str_detect(country, "Regional")) %>%
+  filter(!(country %in% c("African Union", "Global",
+                          "Panama Canal Area Military School"))) %>%
+  # TODO: Fix this; right now this just combines Serbia and Montenegro...
+  mutate(country = ifelse(country == "Serbia and Montenegro", "Serbia", country)) %>%
+  mutate(country = countrycode(country, "country.name", "country.name")) %>%
+  gather(year, amount, -country) %>%
+  # There are some duplicate countries, but all only have one amount
+  group_by(country, year) %>%
+  summarise(amount = sum(amount, na.rm=TRUE)) %>%
+  ungroup() %>%
+  mutate(iso3 = countrycode(country, "country.name", "iso3c"),
+         cowcode = countrycode(country, "country.name", "cown"),
+         cowcode = ifelse(country == "Serbia", 555, cowcode),
+         year = as.numeric(year),
+         amount.log = log1p(amount))
+
+
+# Add FDI and ODA
+# is there any relationship between tier ratings and FDI? Is FDI less likely in countries with worse ratings, once one controls for other economic and political factors? I suspect not, but it would be nice to test. Similarly for trade. 
+# FDI ~ tier level + controls
+wdi.indicators <- c("BN.KLT.DINV.CD",  # FDI, net inflows (current US$)
+                    "DT.ODA.ALLD.CD")  # Net ODA and official aid received (current US$)
+wdi.raw <- WDI(country="all", wdi.indicators, extra=TRUE, start=1991, end=2016)
+wdi.countries <- countrycode(na.exclude(unique(df.full$cowcode)), "cown", "iso2c")
+
+wdi.clean <- wdi.raw %>%
+  filter(iso2c %in% wdi.countries) %>%
+  rename(fdi = BN.KLT.DINV.CD, oda = DT.ODA.ALLD.CD) %>%
+  mutate(oda.log = sapply(oda, FUN=function(x) ifelse(x < 0, NA, log1p(x))),
+         fdi.log = sapply(fdi, FUN=function(x) ifelse(x < 0, NA, log1p(x)))) %>%
+  mutate(cowcode = countrycode(iso2c, "iso2c", "cown"),
+         cowcode = ifelse(country == "Serbia", 555, cowcode),
+         region = factor(region),  # Get rid of unused levels first
+         region = factor(region, labels =
+                           gsub(" \\(all income levels\\)", "", levels(region)))) %>%
+  select(-c(iso2c, capital, longitude, latitude, lending))
+
+
+# Add BITS
+#
+# Note: as of at least 2017-01-03, the UN changed their BIT database and broke
+# this code. Additionally, instead of showing a single HTML table, the page
+# shows billions of nested tables and it's awful. So, this just loads the
+# existing `us_bits.csv` file saved before the website change.
+
+# bits.url <- "https://icsid.worldbank.org/apps/ICSIDWEB/resources/Pages/BITDetails.aspx?state=ST181"
+# bits.table.xpath <- '//*[@id="ctl00_m_g_4238daa0_aae6_4bbc_b65b_a6998b248617_ctl00_gvTreatiesbyCountry"]'
+# 
+# us.bits <- read_html(bits.url) %>%
+#   html_nodes(xpath=bits.table.xpath) %>%
+#   html_table() %>% bind_rows() %>%
+#   select(bit.partner = Party, sig.date = `Signature Date`,
+#          start.date = `Entry into Force Date`) %>%
+#   mutate(sig.date = mdy(sig.date),
+#          sig.year = year(sig.date),
+#          start.date = mdy(start.date),
+#          start.year = year(start.date),
+#          bit.partner = countrycode(bit.partner, "country.name", "country.name"),
+#          bit.partner.cow = countrycode(bit.partner, "country.name", "cown"),
+#          bit.partner.cow = ifelse(bit.partner == "Serbia", 555, bit.partner.cow),
+#          bit.partner.iso = countrycode(bit.partner, "country.name", "iso3c"))
+# write_csv(us.bits, path="data/us_bits.csv")
+us.bits <- read_csv(file.path(PROJHOME, "data", "processed", "us_bits.csv"))
+
+us.bits.panel <- expand.grid(bit.partner = us.bits$bit.partner, 
+                             year = seq(min(us.bits$sig.year), 
+                                        max(us.bits$start.year, na.rm=TRUE), 1),
+                             stringsAsFactors=FALSE) %>%
+  right_join(us.bits, by="bit.partner") %>%
+  mutate(has.bit.sig.with.us = year >= sig.year,
+         has.bit.start.with.us = year >= start.year) %>%
+  group_by(bit.partner.cow, year) %>%
+  summarise_each(funs(max), c(has.bit.sig.with.us, has.bit.start.with.us)) %>%
+  mutate(has.bit.sig.with.us = has.bit.sig.with.us == 1,
+         has.bit.start.with.us = has.bit.start.with.us == 1)
+
+
+# Imports to the US
+# IMF direction of trade statistics
+# http://data.imf.org/regular.aspx?key=61013712
+imports.us <- read_excel(file.path(PROJHOME, "data", "original",
+                                   "External_Trade_by_Counterpart.xls"), 
+                         sheet=2, skip=6) %>%
+  select(country = 1, everything()) %>%
+  mutate_each(funs(ifelse(. == "-" | . == "...", NA, .)), -country) %>%
+  gather(year, amount, -country) %>%
+  mutate(year = as.numeric(year),
+         amount = as.numeric(amount) * 1000000,
+         amount.log = log1p(amount),
+         country = ifelse(country == "Serbia & Montenegro" | 
+                            country == "Serbia & Montenegro n.s.", 
+                          "Serbia", country),
+         country = countrycode(country, "country.name", "country.name")) %>%
+  filter(!is.na(country)) %>%
+  mutate(iso3 = countrycode(country, "country.name", "iso3c"),
+         cowcode = countrycode(country, "country.name", "cown"),
+         cowcode = ifelse(country == "Serbia", 555, cowcode)) %>%
+  group_by(cowcode, year) %>%
+  filter(!is.na(cowcode)) %>%
+  summarise_each(funs(max(., na.rm=TRUE)), starts_with("amount")) %>% ungroup()
+
+
+# US FDI only
+# Bilateral FDI statistics from UNCTAD:
+# http://unctad.org/en/Pages/DIAE/FDI%20Statistics/FDI-Statistics-Bilateral.aspx
+# NOTE: I had to manually clean up their Excel file so that R could work with it
+us.fdi <- read_csv(file.path(PROJHOME, "data", "original",
+                             "unctad_us_fdi.csv"), na="-") %>%
+  mutate_each(funs(ifelse(. == "..", NA, .)), -Country) %>%
+  gather(year, amount, -Country) %>%
+  mutate(year = as.numeric(year),
+         amount = as.numeric(str_replace(amount, " +", "")) * 1000000,
+         amount = ifelse(is.na(amount) | amount < 0, 0, amount),
+         amount.log = log1p(amount),
+         country = countrycode(Country, "country.name", "country.name")) %>%
+  filter(!is.na(country)) %>%
+  mutate(cowcode = countrycode(Country, "country.name", "cown"),
+         cowcode = ifelse(country == "Serbia", 555, cowcode)) %>%
+  filter(!is.na(cowcode)) 
+
+
+# Green book vs. OECD ODA?
+# Green book counts more than OECD does
+# Greenbook: https://catalog.data.gov/dataset/us-overseas-loans-and-grants-greenbook-usaid-1554
+# Foreign aid explorer: https://explorer.usaid.gov/
+# AidData: http://aiddata.org/
+#
+# US aid as a percent of total aid (get both US and global aid from OECD)
+aidata <- read_csv(file.path(PROJHOME, "data", "original",
+                             "AidDataCoreDonorRecipientYear_ResearchRelease_Level1_v3.0.csv")) %>%
+  filter(!str_detect(recipient, "Regional")) %>%
+  mutate(recipient.country = countrycode(recipient, "country.name", "country.name"),
+         recipient.country = ifelse(recipient == "Serbia and Montenegro", 
+                                    "Serbia", recipient.country)) %>%
+  filter(!is.na(recipient.country))
+
+aid.all <- aidata %>%
+  group_by(recipient.country, year) %>%
+  summarise(aid.total = sum(commitment_amount_usd_constant_sum, na.rm=TRUE))
+
+aid.us <- aidata %>%
+  filter(donor == "United States") %>%
+  group_by(recipient.country, year) %>%
+  summarise(aid.us = sum(commitment_amount_usd_constant_sum, na.rm=TRUE))
+
+aid.us.total <- aid.all %>%
+  left_join(aid.us, by=c("recipient.country", "year")) %>%
+  mutate(aid.us.total.perc = aid.us / aid.total,
+         aid.total.log = log1p(aid.total),
+         aid.us.log = log1p(aid.us),
+         recipient.iso = countrycode(recipient.country, "country.name", "iso3c"),
+         recipient.cowcode = countrycode(recipient.country, "country.name", "cown"),
+         recipient.cowcode = ifelse(recipient.country == "Serbia",
+                                    as.integer(555), recipient.cowcode)) %>%
+  ungroup()
+write_csv(aid.us.total, path=file.path(PROJHOME, "data", "processed",
+                                       "aid_total.csv"))
+
+robustness.df <- df.full %>% ungroup() %>%
+  expand(cowcode, year) %>%
+  left_join(select(oecd.dac, year, cowcode = ccode, dac_status, dac_abbr, dac_eligible), 
+            by=c("cowcode", "year")) %>%
+  left_join(select(military.aid, year, cowcode, us.military.aid = amount, 
+                   us.military.aid.log = amount.log),
+            by=c("cowcode", "year")) %>%
+  left_join(select(wdi.clean, year, cowcode, fdi, oda.wdi = oda, fdi.log, 
+                   oda.wdi.log = oda.log),
+            by=c("cowcode", "year")) %>%
+  left_join(select(us.bits.panel, year, cowcode = bit.partner.cow,
+                   has.bit.sig.with.us, has.bit.start.with.us),
+            by=c("cowcode", "year")) %>%
+  mutate(has.bit.sig.with.us = ifelse(is.na(has.bit.sig.with.us), 
+                                      FALSE, has.bit.sig.with.us),
+         has.bit.start.with.us = ifelse(is.na(has.bit.start.with.us), 
+                                        FALSE, has.bit.start.with.us)) %>%
+  left_join(select(imports.us, year, cowcode, trade.to.us = amount, 
+                   trade.to.us.log = amount.log),
+            by=c("cowcode", "year")) %>%
+  left_join(select(us.fdi, year, cowcode, fdi.from.us = amount, 
+                   fdi.from.us.log = amount.log),
+            by=c("cowcode", "year")) %>%
+  left_join(select(aid.us.total, year, cowcode = recipient.cowcode, 
+                   aid.total, aid.total.log, aid.us, aid.us.log, 
+                   aid.us.total.perc),
+            by=c("cowcode", "year")) %>%
+  mutate(fdi.from.us = ifelse(is.na(fdi.from.us), 0, fdi.from.us),
+         fdi.from.us.log = ifelse(is.na(fdi.from.us.log), 0, fdi.from.us.log),
+         us.military.aid = ifelse(is.na(us.military.aid), 0, us.military.aid),
+         us.military.aid.log = ifelse(is.na(us.military.aid.log), 0, us.military.aid.log),
+         trade.to.us = ifelse(is.na(trade.to.us), 0, trade.to.us),
+         trade.to.us.log = ifelse(is.na(trade.to.us.log), 0, trade.to.us.log),
+         aid.us.total.perc = ifelse(is.na(aid.us.total.perc), 0, aid.us.total.perc)) %>%
+  group_by(cowcode) %>%
+  mutate_each(funs(lag = lag))
+  
+saveRDS(robustness.df, file.path(PROJHOME, "data", "processed", "robustness_df.rds"))

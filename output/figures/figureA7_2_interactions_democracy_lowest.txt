@@ -1,0 +1,1 @@
+Predicted probability of criminalization across different levels of democracy, given assignment to the lowest TIP tier (Model 7.5.2).

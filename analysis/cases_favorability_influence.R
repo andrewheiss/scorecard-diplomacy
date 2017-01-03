@@ -1,0 +1,38 @@
+# ----------------
+# Load libraries
+# ----------------
+library(tidyverse)
+library(ggrepel)
+
+source(file.path(PROJHOME, "shared_functions.R"))
+
+cases <- read_csv(file.path(PROJHOME, "data", "original", 
+                            "cases_favorability_influence.csv")) %>%
+  gather(country, score, -Countries) %>%
+  rename(variable = Countries) %>%
+  mutate(score = gsub("−", "-", score),
+         score = as.numeric(score)) %>%
+  mutate(variable = recode(variable,`Favorability of conditioning factors` = "Favorability")) %>%
+  spread(variable, score) %>%
+  mutate(nudge_x = case_when(
+    .$country %in% c("Chad", "Japan", "Nigeria", "Israel", "Kazakhstan", "Mozambique") ~ -0.5,
+    .$country == "United Arab Emirates" ~ 1.5,
+    TRUE ~ 0.5
+  )) %>%
+  mutate(nudge_y = case_when(
+    .$country == "United Arab Emirates" ~ -0.5,
+    .$country == "Ecuador" ~ -0.4,
+    TRUE ~ 0
+  ))
+
+p.cases.favor.influence <- ggplot(cases, 
+                                  aes(x=Influence, y=Favorability,
+                                      label=country)) + 
+  stat_smooth(size=0.5, method="lm", fullrange=TRUE, colour="grey30", alpha=0.1) +
+  geom_text_repel(size=2.5, family="Source Sans Pro Light",
+                  nudge_x = cases$nudge_x, nudge_y = cases$nudge_y,
+                  segment.color = "grey30", segment.size = 0.25,
+                  box.padding = unit(0.2, "lines")) +
+  geom_point(size=1) + 
+  coord_cartesian(ylim=c(-4, 4)) + xlim(0, 15) + 
+  theme_clean()

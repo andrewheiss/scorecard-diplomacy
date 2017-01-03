@@ -1,0 +1,13 @@
+[1] "Laws passed each month"
+month
+ 1  2  3  4  5  6  7  8  9 10 11 12 
+13 10 14 15 11  8 13  8  5  8  3 15 
+
+
+[1] "Chi-squared test"
+
+	Chi-squared test for given probabilities
+
+data:  df.fig6.5.table
+X-squared = 16.61, df = 11, p-value = 0.12
+

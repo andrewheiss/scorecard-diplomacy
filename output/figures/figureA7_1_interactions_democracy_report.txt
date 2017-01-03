@@ -1,0 +1,1 @@
+Predicted probability of criminalization across different levels of democracy, given presence in the annual TIP report (Model 7.5.1).

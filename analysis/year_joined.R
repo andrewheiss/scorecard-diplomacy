@@ -1,0 +1,72 @@
+# ----------------
+# Load libraries
+# ----------------
+library(tidyverse)
+library(countrycode)
+library(maptools)
+library(rgdal)
+
+source(file.path(PROJHOME, "shared_functions.R"))
+
+
+# -----------
+# Load data
+# -----------
+# Load map information
+countries.map <- readOGR(dsn=file.path(PROJHOME, "data", "maps"), 
+                         layer="ne_110m_admin_0_countries")
+countries.robinson <- spTransform(countries.map, CRS("+proj=robin"))
+countries.ggmap <- fortify(countries.robinson, region="iso_a3") %>%
+  filter(!(id %in% c("ATA", -99))) %>%  # Get rid of Antarctica and NAs
+  mutate(id = ifelse(id == "GRL", "DNK", id))  # Greenland is part of Denmark
+
+# All possible countries (to fix the South Sudan issue)
+possible.countries <- data_frame(id = unique(as.character(countries.ggmap$id)))
+
+# Year bins
+year.levels <- data_frame(start_year = 2001, year.level = 1) %>%
+  bind_rows(data_frame(start_year = 2002:2004, year.level = 2)) %>%
+  bind_rows(data_frame(start_year = 2005:2007, year.level = 3)) %>%
+  bind_rows(data_frame(start_year = 2007:2013, year.level = 4))
+
+joined <- read_csv(file.path(PROJHOME, "data", "original",
+                             "year_joined.csv")) %>%
+  select(id = iso, start_year)
+
+year.labels <- c("Initial 2001 report    ", "2002-2004    ", "2005-2007    ",
+                 "2007-2013")
+
+joined.full <- possible.countries %>% 
+  left_join(joined, by="id") %>%
+  left_join(year.levels, by="start_year") %>%
+  mutate(year.level = factor(year.level, labels = year.labels, ordered = TRUE))
+
+
+# -----------
+# Plot data
+# -----------
+report.map <- ggplot(joined.full, aes(fill=year.level, map_id=id)) +
+  geom_map(map=countries.ggmap) + 
+  # Second layer to add borders and slash-less legend
+  geom_map(map=countries.ggmap, size=0.15, colour="black", show.legend=FALSE) + 
+  expand_limits(x=countries.ggmap$long, y=countries.ggmap$lat) + 
+  coord_equal() +
+  scale_fill_manual(values=c("grey90", "grey60", "grey30", "black"), name="",
+                    guide = guide_legend(override.aes=list(size = 0.1))) +
+  theme_blank_map(base_size=10) + 
+  theme(legend.position="top", legend.key.size=unit(0.65, "lines"),
+        legend.key = element_blank(),
+        strip.background=element_rect(colour="#FFFFFF", fill="#FFFFFF"))
+
+
+# ------------------------------------
+# Export underlying plot data to CSV
+# ------------------------------------
+to.csv <- joined.full %>%
+  mutate(ccode = countrycode(id, "iso3c", "cown")) %>%
+  arrange(start_year) %>%
+  select(iso3 = id, ccode, start_year) %>%
+  mutate(start_year = as.integer(start_year))
+
+write_csv(to.csv, path=file.path(PROJHOME, "data", "processed",
+                                 "map_year_joined.csv"))
