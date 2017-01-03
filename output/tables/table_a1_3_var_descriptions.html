@@ -1,0 +1,253 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta http-equiv="Content-Style-Type" content="text/css" />
+  <meta name="generator" content="pandoc" />
+  <title></title>
+  <style type="text/css">code{white-space: pre;}</style>
+</head>
+<body>
+<table>
+<caption>Table A1.3: Description of all variables used in statistical analysis.</caption>
+<colgroup>
+<col width="23%" />
+<col width="25%" />
+<col width="44%" />
+<col width="7%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th align="left">Variable</th>
+<th align="left">Description</th>
+<th align="left">Source</th>
+<th align="left">Chapters</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td align="left">Criminalization</td>
+<td align="left">The complete prohibition of all forms of human trafficking, including sex and labor trafficking for men and women, children and adults. Penalties must be significant, usually meaning minimum sentences of 3-5 years. Note that, because the US trafficking report comes out annually in June, to avoid sequencing errors in our inference, a country is coded as having fully criminalized in a given year only if it had done so prior to the issuance of the report in June. Dates usually refer to the actual enactment of the legislation, but in cases where that information is not available, the month of passage of the legislation is used. If no date could be established, the country was coded as having fully criminalized that year (equivalent to an assumption that it criminalized before the report came out, thus biasing any systematic error against a finding of an effect of the report on criminalization).</td>
+<td align="left">UN global report on trafficking, 2009. US TIP reports, domestic legislation from the International Organization of Migration (IOM) database and other sources.</td>
+<td align="left">3, 4, 5, 6, 7</td>
+</tr>
+<tr class="even">
+<td align="left">2000 TIP protocol ratification</td>
+<td align="left">An indicator (0/1) for whether a country has ratified the UN Palermo Protocol to Prevent, Suppress and Punish Trafficking in Persons Especially Women and Children, supplementing the United Nations Convention against Transnational Organized Crime</td>
+<td align="left">United Nations Treaty Collection (https://treaties.un.org/Pages/ViewDetails.aspx?src=TREATY&amp;mtdsg_no=XVIII-12-a&amp;chapter=18)</td>
+<td align="left">3, 4, 5, 6, 7</td>
+</tr>
+<tr class="odd">
+<td align="left">Worse civil liberties</td>
+<td align="left">Freedom House Civil Liberties; 1 to 7 scale, with 1 representing the best civil liberties and 7 the worst.</td>
+<td align="left">Freedom House (http://www.freedom house.org/reports)</td>
+<td align="left">3, 4, 6, 7</td>
+</tr>
+<tr class="even">
+<td align="left">US aid (logged)</td>
+<td align="left">The log of Total Aid from the United States constant 2010 $US. We add 1 before taking the log so that the value for no aid is 0.</td>
+<td align="left">US Overseas Loans &amp; Grants (Greenbook)</td>
+<td align="left">3, 5, 6, 7</td>
+</tr>
+<tr class="odd">
+<td align="left">Total population (logged)</td>
+<td align="left">The log of total population</td>
+<td align="left">World Bank indicators</td>
+<td align="left">3, 4, 5, 6</td>
+</tr>
+<tr class="even">
+<td align="left">Regional density of criminalization</td>
+<td align="left">A measure capturing the percent of countries in a region that have criminalized trafficking</td>
+<td align="left">Generated based on the criminalization variable</td>
+<td align="left">3, 6, 7</td>
+</tr>
+<tr class="odd">
+<td align="left">Trafficking intensity in destination countries</td>
+<td align="left">Incidence of reporting of trafficking persons in destination countries. 1=very low; 2=low; 3=medium; 4=high; 5=very high.</td>
+<td align="left">2006 UNODC TIP report, Appendix 5: Incidence of reporting of (destination/origin/tr ansit) countries. The incidence from the 2006 report is extended to all years in the analysis.</td>
+<td align="left">3, 4, 6</td>
+</tr>
+<tr class="even">
+<td align="left">Trafficking intensity in countries of origin</td>
+<td align="left">Incidence of reporting of trafficking persons in origin countries. 1=very low; 2=low; 3=medium; 4=high; 5=very high.</td>
+<td align="left">2006 UNODC TIP report, Appendix 5: Incidence of reporting of (destination/origin/tr ansit) countries. The incidence from the 2006 report is extended to all years in the analysis.</td>
+<td align="left">3, 4, 6</td>
+</tr>
+<tr class="odd">
+<td align="left">Trafficking intensity in transit countries</td>
+<td align="left">Incidence of reporting of trafficking persons in transit countries. 1=very low; 2=low; 3=medium; 4=high; 5=very high.</td>
+<td align="left">2006 UNODC TIP report, Appendix 5: Incidence of reporting of (destination/origin/tr ansit) countries. The incidence from the 2006 report is extended to all years in the analysis.</td>
+<td align="left">3, 4, 6</td>
+</tr>
+<tr class="even">
+<td align="left">Missing information</td>
+<td align="left">A count of number of variables for which information is missing in a given year for: Freedom House civil liberties, the International Country Risk Guide corruption score, Erik Voeten’s UN Affinity voting data, and four variables from the World Bank: Net ODA, Intentional homicides, Health expenditures, and GDP. The variable also counts the three variables from the UN incidence data on TIP, adding a one for each of these variables where the UN did not find any information.</td>
+<td align="left">Author generated based on included variables and their sources</td>
+<td align="left">3, 6, 7</td>
+</tr>
+<tr class="odd">
+<td align="left">US pressure (Watchlist or Tier 3) / Lowest tier</td>
+<td align="left">Dichotomous variable (0/1) indicating whether the US has placed the country on the Watchlist or rated the country Tier 3.</td>
+<td align="left">TIP report</td>
+<td align="left">3, 5, 7</td>
+</tr>
+<tr class="even">
+<td align="left">Corruption</td>
+<td align="left">“Control of corruption captures perceptions of the extent to which public power is exercised for private gain.”</td>
+<td align="left">Worldwide Governance Indicators project</td>
+<td align="left">3, 6</td>
+</tr>
+<tr class="odd">
+<td align="left">NGO density</td>
+<td align="left">A count of number of total times the annual US State Department TIP report for a given country mentions the word NGO, divided by the number of reports in the data. Thus, it captures average number of NGO mentions per report for a given country and it is a constant for each country. The data is extended backwards to years before a country was included in the report.</td>
+<td align="left">TIP report, variable generated by author</td>
+<td align="left">3, 6</td>
+</tr>
+<tr class="even">
+<td align="left">GDP (logged)</td>
+<td align="left">GDP in current US dollars</td>
+<td align="left">World Bank indicators</td>
+<td align="left">3</td>
+</tr>
+<tr class="odd">
+<td align="left">Total population (logged)</td>
+<td align="left">The log of total population</td>
+<td align="left">World Bank indicators</td>
+<td align="left">3</td>
+</tr>
+<tr class="even">
+<td align="left">Rule of law</td>
+<td align="left">&quot;Rule of law captures perceptions of the extent to which agents have confidence in and abide by the rules of society&quot;</td>
+<td align="left">Worldwide Governance Indicators project</td>
+<td align="left">3</td>
+</tr>
+<tr class="odd">
+<td align="left">In report</td>
+<td align="left">Dichotomous variable indicating whether a country is included in the report.</td>
+<td align="left">TIP report</td>
+<td align="left">4, 6, 7</td>
+</tr>
+<tr class="even">
+<td align="left">GDP per capita (logged)</td>
+<td align="left">GDP / Total Population (logged) in current US dollars</td>
+<td align="left">World Bank indicators</td>
+<td align="left">4, 5, 6</td>
+</tr>
+<tr class="odd">
+<td align="left">Coverage / Human trafficking news (logged)</td>
+<td align="left">The log of the number of times a country's name will appear in a news story in the Lexis-Nexis database within 50 words of the phrase &quot;human trafficking&quot; (or a close cognate)</td>
+<td align="left">Author generated</td>
+<td align="left">4</td>
+</tr>
+<tr class="even">
+<td align="left">Reaction (no media)</td>
+<td align="left">Count of non-media reactions in Wikileaks cables</td>
+<td align="left">Author generated from Wikileaks cables</td>
+<td align="left">5, 6</td>
+</tr>
+<tr class="odd">
+<td align="left">Tier 2</td>
+<td align="left">Dichotomous variable (0/1) indicating whether the US has rated a country as Tier 2.</td>
+<td align="left">TIP report</td>
+<td align="left">5, 6</td>
+</tr>
+<tr class="even">
+<td align="left">Watchlist</td>
+<td align="left">Dichotomous variable (0/1) indicating whether the US has placed a country on the Tier 2 watch list, which means that it may drop to Tier 3 the following year.</td>
+<td align="left">TIP report</td>
+<td align="left">5, 6</td>
+</tr>
+<tr class="odd">
+<td align="left">Tier 3</td>
+<td align="left">Dichotomous variable (0/1) indicating whether the US has rated a country as Tier 3.</td>
+<td align="left">TIP report</td>
+<td align="left">5, 6</td>
+</tr>
+<tr class="even">
+<td align="left">Worse total freedom</td>
+<td align="left">Sum of Freedom House political rights and civil liberties scores. 2 to 14 scale, with 2 representing the best total freedom and 7 the worst.</td>
+<td align="left">Freedom House (http://www.freedom house.org/reports)</td>
+<td align="left">5, 6</td>
+</tr>
+<tr class="odd">
+<td align="left">Share of total trade with US</td>
+<td align="left">Share of a country’s total trade (imports plus exports) that is with the United States.</td>
+<td align="left">IMF Direction of Trade Statistics</td>
+<td align="left">5</td>
+</tr>
+<tr class="even">
+<td align="left">First demotion (t−1)</td>
+<td align="left">Dichotomous variable (0/1) coded 1 in a year that a country is placed either on the watch list or rated a Tier 3 (without first having been on the watch list) for the first time.</td>
+<td align="left">TIP report</td>
+<td align="left">6, 7</td>
+</tr>
+<tr class="odd">
+<td align="left">First demotion (t−2)</td>
+<td align="left">Dichotomous variable (0/1) coded 1 in a year that a country is placed either on the watch list or rated a Tier 3 (without first having been on the watch list) for the first time.</td>
+<td align="left">TIP report</td>
+<td align="left">6, 7</td>
+</tr>
+<tr class="even">
+<td align="left">First demotion (t−3)</td>
+<td align="left">Dichotomous variable (0/1) coded 1 in a year that a country is placed either on the watch list or rated a Tier 3 (without first having been on the watch list) for the first time.</td>
+<td align="left">TIP report</td>
+<td align="left">6, 7</td>
+</tr>
+<tr class="odd">
+<td align="left">Share of women in parliament</td>
+<td align="left">Share of voting seats in the lower house of national parliaments held by women (% of total seats), as of the last day of the listed year.</td>
+<td align="left">Women in National Parliaments, statistical archive. http://www.ipu.org/ wmn-e/classif- arc.htm, accessed February 2012.</td>
+<td align="left">6, 7</td>
+</tr>
+<tr class="even">
+<td align="left">Aid greater than $100 million</td>
+<td align="left">Dichotomous variable (0/1) indicating whether a country received more than $100 million in aid from the US.</td>
+<td align="left">US Overseas Loans &amp; Grants (Greenbook)</td>
+<td align="left">6</td>
+</tr>
+<tr class="odd">
+<td align="left">Tier 1</td>
+<td align="left">Dichotomous variable (0/1) indicating whether the US has rated a country as Tier 1.</td>
+<td align="left">TIP report</td>
+<td align="left">6</td>
+</tr>
+<tr class="even">
+<td align="left">Total reactions (no media)</td>
+<td align="left">Count of non-media reactions in Wikileaks cables</td>
+<td align="left">Author generated from Wikileaks cables</td>
+<td align="left">6</td>
+</tr>
+<tr class="odd">
+<td align="left">US aid as share of total aid (logged)</td>
+<td align="left">Proportion of foreign aid from the US out of all received aid.</td>
+<td align="left">AidData (http://aiddata.org)</td>
+<td align="left">7</td>
+</tr>
+<tr class="even">
+<td align="left">FDI from US (logged)</td>
+<td align="left">Total amount of foreign direct investment (FDI) from the US.</td>
+<td align="left">Bilateral FDI statistics, UN Conference on Trade and Development (http://unctad.org/en/Pages/DIAE/FDI%20Statistics/FDI-Statistics-Bilateral.aspx)</td>
+<td align="left">7</td>
+</tr>
+<tr class="odd">
+<td align="left">Has BIT with US</td>
+<td align="left">Dichotomous variable (0/1) indicating whether a country has signed a bilateral investment treaty (BIT) with the US.</td>
+<td align="left">Office of the United States Trade Representative (https://ustr.gov/trade-agreements/bilateral-investment-treaties)</td>
+<td align="left">7</td>
+</tr>
+<tr class="even">
+<td align="left">Imports to US (logged)</td>
+<td align="left">Total value of imports to the US for a given country.</td>
+<td align="left">IMF (http://data.imf.org/regular.aspx?key=61013712)</td>
+<td align="left">7</td>
+</tr>
+<tr class="odd">
+<td align="left">US military aid (logged)</td>
+<td align="left">Total military aid provided by the US</td>
+<td align="left">Security Assistance Monitor (http://www.securityassistance.org/data/country/military/country/1996/2017/is_all/Global)</td>
+<td align="left">7</td>
+</tr>
+</tbody>
+</table>
+</body>
+</html>

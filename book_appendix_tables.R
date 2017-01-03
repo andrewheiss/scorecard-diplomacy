@@ -1,0 +1,1555 @@
+# ----------------
+# Load libraries
+# ----------------
+library(tidyverse)
+library(magrittr)
+library(pander)
+library(broom)
+library(stargazer)
+library(survival)
+library(countrycode)
+library(ggstance)
+library(scales)
+
+source(file.path(PROJHOME, "shared_functions.R"))
+
+# Pandoc options
+panderOptions('pandoc.binary', '/Users/andrew/.cabal/bin/pandoc')
+panderOptions('table.split.table', Inf)
+panderOptions('table.split.cells', 50)
+panderOptions('keep.line.breaks', TRUE)
+panderOptions('table.style', 'multiline')
+panderOptions('table.alignment.default', 'left')
+
+cases <- c("ARM", "IDN", "ECU", "MOZ", "KAZ", "ARG", "ISR", 
+           "ARE", "NGA", "OMN", "HND", "JPN", "TCD", "ZWE", "MYS")
+
+# ------------------
+# Useful functions
+# ------------------
+
+# Generate special variables for the hazard models
+# --------------------------------------------------
+# Given a sequence of years for a country, return 0 for all years before
+# entering the report, 1 for the year added to the report, and NA for all
+# years after.
+#
+# Example:
+#   name  year yr2fail2  fail
+#   Cuba  1997       NA     0
+#   Cuba  1998       NA     0
+#   Cuba  1999        4     0
+#   Cuba  2000        3     0
+#   Cuba  2001        2     0
+#   Cuba  2002        1     0
+#   Cuba  2003        0     1
+#   Cuba  2004       -1    NA
+#   Cuba  2005       -2    NA
+#
+generate.failure <- function(years.to.report) {
+  started.index <- which(years.to.report == 0)
+  if (length(started.index) > 0) {
+    output <- c(rep(0, started.index - 1),  # A bunch of 0s
+                1,  # Added to report here
+                rep(NA, length(years.to.report) - started.index))  # A bunch of NAs
+  } else {
+    output <- rep(0, length(years.to.report))  # All 0s
+  }
+}
+
+# Calculate a pseudo R-squared measure using
+# 1-\frac{\text{Residual Deviance}}{\text{Null Deviance}}
+calc.pseudo.r.squared <- function(x.model) {
+  return(round(1 - (x.model$deviance / x.model$null.deviance), 4))
+}
+
+# Calculating odds ratios for logit coefficients is trivial: 
+#  exp(coef(model))
+#
+# But calcuating the standard errors for those coefficients is tricker; just
+# running exp() on the standard errors doesn't work. Stata automatically
+# applies the delta method to odds ratio standard errors, but R doesn't.
+# See also: https://www.stata.com/support/faqs/statistics/delta-rule/
+#
+# It's easy to use the delta method manually in R, though. Multiply the odds
+# ratio (or gradient, technically) by the diagonal of the variance-covariance
+# matrix by the gradient (again), or `or^2 * se.diag`
+# See also: http://www.ats.ucla.edu/stat/r/faq/deltamethod.htm
+#
+get.or.se <- function(model) {
+  tidy(model) %>% 
+    mutate(or = exp(estimate),
+           se.diag = diag(vcov(model)),
+           or.se = sqrt(or^2 * se.diag)) %>%
+    select(or.se) %>% unlist %>% unname
+}
+
+
+# -----------------------
+# Load and reshape data
+# -----------------------
+# Coefficient names for coefficient plots
+coef.names <- read_csv(file.path(PROJHOME, "data", "original", "coef_names.csv"))
+
+# Full, clean, properly lagged data
+df.complete.orig <- readRDS(file.path(PROJHOME, "data", "processed",
+                                      "df_complete.rds"))
+df.robustness <- readRDS(file.path(PROJHOME, "data", "processed",
+                                   "robustness_df.rds"))
+
+df.complete <- df.complete.orig %>% 
+  left_join(df.robustness, by=c("year", "cowcode")) %>%
+  mutate(tier_1 = ifelse(tier == 1, 1, 0),
+         tier_2 = ifelse(tier == 2, 1, 0),
+         tier_25 = ifelse(tier == 2.5, 1, 0),
+         tier_3 = ifelse(tier == 3, 1, 0),
+         pressure = ifelse(tier_25 == 1 | tier_3 == 1, 1, 0)) %>%
+  group_by(cowcode) %>%
+  mutate(pressure_lag = lag(pressure)) %>%
+  ungroup()
+
+ever.dac.eligible <- df.complete %>%
+  filter(dac_eligible) %>%
+  select(cowcode) %>% unique %>% unlist
+
+df.dac.only <- df.complete %>%
+  filter(cowcode %in% ever.dac.eligible)
+
+df.reactions.small <- readRDS(file.path(PROJHOME, "data", "processed",
+                                        "df_reactions_small.rds"))
+
+df.reactions <- df.complete %>%
+  left_join(df.reactions.small, by=c("year", "cowcode")) %>%
+  group_by(cowcode) %>%
+  mutate(totalreactionnomedia1 = lag(totalreactionnomedia),
+         reactionnomedia1 = lag(reactionnomedia),
+         bigaid1 = lag(bigaid),
+         loght_news_country1 = lag(loght_news_country),
+         adj_ratproto2000_1 = lag(adj_ratproto2000)) %>%
+  filter(cowcode != 2)
+
+# Generate variables for hazard models
+df.hazardized.report <- df.complete %>%
+  mutate(yr2fail2 = tier_date - year,  # Years before "failing" (entering report)
+         yrfromj2 = year - 2000) %>%  # Years since possible to be in report (post 2000)
+  group_by(name) %>%
+  mutate(endstate_inreport = mean(notier, na.rm=TRUE),
+         endstate_inreport = ifelse(endstate_inreport > 0, 1, 0),
+         fail = generate.failure(yr2fail2)) %>%
+  filter(yr2fail2 >= 0 | is.na(yr2fail2)) %>%
+  filter(yrfromj2 >= 0) %>%
+  ungroup() %>%
+  arrange(cowcode, year)
+
+df.hazardized.crim <- df.complete %>%
+  mutate(yr2fail2 = crim1date - year,  # Years before "failing" (criminalization)
+         yrfromj2 = year - 1991) %>%  # Years since possible to be in report (post 1991)
+  group_by(name) %>%
+  mutate(endstate1 = mean(crim1, na.rm=TRUE),
+         endstate1 = as.numeric(ifelse(endstate1 > 0, 1, 0)),
+         fail = generate.failure(yr2fail2)) %>% 
+  filter(yr2fail2 >= 0 | is.na(yr2fail2)) %>%
+  filter(yrfromj2 >= 0) %>%
+  ungroup() %>%
+  arrange(cowcode, year)
+
+df.hazardized.crim.dac <- df.dac.only %>%
+  mutate(yr2fail2 = crim1date - year,  # Years before "failing" (criminalization)
+         yrfromj2 = year - 1991) %>%  # Years since possible to be in report (post 1991)
+  group_by(name) %>%
+  mutate(endstate1 = mean(crim1, na.rm=TRUE),
+         endstate1 = as.numeric(ifelse(endstate1 > 0, 1, 0)),
+         fail = generate.failure(yr2fail2)) %>% 
+  filter(yr2fail2 >= 0 | is.na(yr2fail2)) %>%
+  filter(yrfromj2 >= 0) %>%
+  ungroup() %>%
+  arrange(cowcode, year)
+
+# Generate start time variables
+# Stata does this behind the scenes when running stset ..., id(name)
+# coxph needs an explicit column
+# See Q&A here: http://stats.stackexchange.com/q/177560/3025
+df.survivalized.report <- df.hazardized.report %>%
+  filter(!is.na(yrfromj2)) %>%
+  group_by(name) %>%
+  mutate(start_time = lag(yrfromj2, default=0)) %>%
+  filter(year > 2000)
+
+df.survivalized.crim <- df.hazardized.crim %>%
+  filter(!is.na(yrfromj2)) %>%
+  mutate(inreport1 = as.numeric(!as.logical(notier1)),
+         test00 = inreport1 * logeconasstP_1,
+         econasstPgdp_1_1000 = econasstPgdp_1 * 1000,
+         test_gdp_1_1000 = econasstPgdp_1_1000 * inreport1) %>%
+  group_by(name) %>%
+  mutate(start_time = lag(yrfromj2, default=0)) %>% 
+  filter(year > 1999)
+
+df.survivalized.crim.dac <- df.hazardized.crim.dac %>%
+  filter(!is.na(yrfromj2)) %>%
+  mutate(inreport1 = as.numeric(!as.logical(notier1)),
+         test00 = inreport1 * logeconasstP_1,
+         econasstPgdp_1_1000 = econasstPgdp_1 * 1000,
+         test_gdp_1_1000 = econasstPgdp_1_1000 * inreport1) %>%
+  group_by(name) %>%
+  mutate(start_time = lag(yrfromj2, default=0)) %>% 
+  filter(year > 1999)
+
+
+# ------------------
+# Methods appendix
+# ------------------
+df.methods.summary <- df.complete %>%
+  filter(year >= 2000) %>%
+  mutate(tier = ifelse(tier == 0, NA, tier),
+         percapeconasst0 = econasst0 / data9,
+         case = cowcode %in% countrycode(cases, "iso3c", "cown")) %>%
+  filter(tier < 4 & !is.na(tier)) %>%
+  group_by(cowcode) %>% mutate(highest.tier = max(tier, na.rm=TRUE)) %>%
+  ungroup()
+
+
+run.t.test <- function(variable, title, single.year=NA, tier1.exclude=FALSE) {
+  if (!is.na(single.year)) {
+    df <- df.methods.summary %>% filter(year == single.year)
+  } else {
+    df <- df.methods.summary
+  }
+  
+  if (tier1.exclude) {
+    df <- df %>% filter(highest.tier != 1)
+  }
+  
+  result <- t.test(as.formula(paste0(variable, " ~ case")),
+                   data=df, var.equal=TRUE)
+  data_frame(Statistic = title,
+             `Case study countries` = comma(result$estimate[2], digits=3),
+             `Other countries` = comma(result$estimate[1], digits=3),
+             `Difference` = comma(result$estimate[2] - 
+                                        result$estimate[1], digits=3),
+             `Significant difference at p = 0.05` = 
+               ifelse(result$p.value < 0.05, "Yes", "No"))
+}
+
+
+final <- bind_rows(
+  run.t.test("tier", title="Tier"),
+  run.t.test("ngos_ave", title="Count of NGOs", 
+             single.year=2011),
+  run.t.test("igos_ave", title="Count of IGOs", 
+             single.year=2011),
+  run.t.test("ht_news_country", title="TIP media coverage"),
+  run.t.test("ht_incidence_transit", title="Incidence (transit)", 
+             single.year=2011),
+  run.t.test("ht_incidence_origin", title="Incidence (origin)", 
+             single.year=2011),
+  run.t.test("ht_incidence_destination", title="Incidence (destination)", 
+             single.year=2011),
+  run.t.test("data4", title="GDP per capita (constant 2000 dollars)"),
+  run.t.test("data9", title="Population"),
+  run.t.test("corrupt", title="Corruption"),
+  run.t.test("fh_pr", title="Political rights"),
+  run.t.test("data8", title="Aid (OECD)"),
+  run.t.test("econasst0", title="Aid (US)"),
+  run.t.test("percapeconasst0", title="Aid (US) per capita"),
+  run.t.test("ratproto2000", title="Ratification of 2000 TIP protocol", 
+             single.year=2011),
+  run.t.test("prop_tip_wl", title="US TIP effort (proportion of Wikileaks cables mentioning TIP)", 
+             single.year=2007)
+)
+
+caption <- "Table A1.6: Comparison of case study countries and other countries in years they are included in the TIP Report."
+
+cat(pandoc.table.return(final, caption=caption),
+    file=file.path(PROJHOME, "output", "tables", "table_a1_6.txt"))
+
+Pandoc.convert(file.path(PROJHOME, "output", "tables", "table_a1_6.txt"),
+               format="html", footer=FALSE, proc.time=FALSE, 
+               options = "-s", open=FALSE)
+
+
+# Analysis of cables
+cables.panel.all <- readRDS(file.path(PROJHOME, "data", "processed",
+                                      "data_figureA_cables.rds"))
+
+cables.presence.tip <- lm(prop_present100 ~ gdpcap.log + oda.log + 
+                            totalfreedom + tier + crim1 + 
+                            ht_incidence_transit + ht_incidence_origin + 
+                            ht_incidence_destination + ratproto2000 +
+                            as.factor(year),
+                          data=cables.panel.all)
+
+var.labs <- c("GDP per capita (logged)", "Total foreign aid (logged)", 
+              "Worse total freedom", "TIP tier",
+              "Trafficking criminalized",
+              "Trafficking intensity in transit countries",
+              "Trafficking intensity in countries of origin",
+              "Trafficking intensity in destination countries",
+              "2000 TIP protocol ratification")
+
+col.labs <- c("Model A1.1")
+
+extra.lines <- list(c("Year fixed effects", c("Yes")))
+
+title <- "Table A1.1: Percent of estimated cables actually present."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a1_1.html")
+
+stargazer(cables.presence.tip,
+          type="html", out=out.file, out.header=TRUE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="Percent of estimated cables actually present",
+          omit="\\.factor|region",
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines,
+          notes="Standard OLS estimates")
+
+
+# -----------
+# Chapter 3
+# -----------
+# Table A3.1: Time to inclusion in report
+# (Model 1.3 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model.3.1.1 <- coxph(Surv(start_time, yrfromj2, fail) ~ logpop_1 + missinfo8_1 +
+                       ngos_ave + fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                       ht_incidence_origin + ht_incidence_transit +
+                       ht_incidence_destination + cluster(name),
+                     data=df.survivalized.report, ties="efron")
+model.3.1.1.fit <- summary(survfit(model.3.1.1))$table
+
+
+# Save table
+var.labs <- c("Total population (logged)", "Missing information", 
+              "NGO density", "Worse civil liberties", 
+              "Regional density of criminalization", 
+              "2000 TIP protocol ratification",
+              "Trafficking intensity in countries of origin", 
+              "Trafficking intensity in transit countries", 
+              "Trafficking intensity in destination countries")
+col.labs <- c("Model 3.1.1")
+
+ses <- list(get.or.se(model.3.1.1))
+
+extra.lines <- list(c("Number of countries", c(model.3.1.1.fit["n.max"])),
+                    c("Number of inclusions", c(model.3.1.1.fit["events"])))
+
+title <- "Table A3.1: Time to a country’s inclusion in the annual <em>U.S. Trafficking in Persons Report</em>."
+notes <- "Robust standard errors in parentheses. All explanatory variables are lagged one period unless otherwise noted."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a3_1.html")
+
+stargazer(model.3.1.1,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, se=ses, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="Time to Inclusion in Report", 
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# Table A3.2: Correlates of shaming
+# (Model 2.1 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model3.2.1 <- glm(uspressure ~ fh_cl1 + logeconasstP_1 + loggdp_1 + logpop +
+                    ratproto2000_1 + ngos_ave + corruption_1,
+                  data=df.complete,
+                  family=binomial(link="logit"))
+
+# (Model 2.2 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model3.2.2 <- glm(uspressure ~ fh_cl1 + logeconasstP_1 + loggdp_1 + logpop +
+                    ratproto2000_1 + ngos_ave + rule_of_law_1,
+                  data=df.complete,
+                  family=binomial(link="logit"))
+
+
+# Save table
+var.labs <- c("Worse civil liberties", "US aid (logged)", "GDP (logged)", 
+              "Total population (logged)", "2000 TIP protocol ratification", 
+              "NGO density", "Corruption", "Rule of law", "Constant")
+col.labs <- c("Model 3.2.1", "Model 3.2.2")
+
+ses <- list(get.or.se(model3.2.1), get.or.se(model3.2.2))
+
+extra.lines <- list(c("Pseudo R-squared",
+                      sapply(list(model3.2.1, model3.2.2), 
+                             calc.pseudo.r.squared)))
+
+title <- "Table A3.2: Correlates of shaming in the annual <em>U.S. Trafficking in Persons Report</em>."
+notes <- "Logit model; odds ratios reported. Standard errors in parentheses. All explanatory variables are lagged one period."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a3_2.html")
+
+stargazer(model3.2.1, model3.2.2,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="US pressure", se=ses,
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# -----------
+# Chapter 4
+# -----------
+# Table A4.1: Determinants of media coverage
+df.media <- df.complete %>% filter(year > 1998) %>%
+  mutate(cowcode_factor = factor(cowcode),
+         cowcode_relevel = relevel(cowcode_factor, ref="92"))
+
+# ("Media coverage 3" at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model4.1.1 <- lm(logstory ~ inreport + inreport_diff + logstory1 + 
+                   fh_cl1 + loggdppercap_1 + ratproto2000_1 + logpop_1 + 
+                   year.factor + cowcode_factor, 
+                 data=df.media)
+
+# ("Media coverage and incidence" at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model4.1.2 <- lm(logstory ~ inreport + inreport_diff + logstory1 + 
+                   fh_cl1 + loggdppercap_1 + ratproto2000_1 + logpop_1 + 
+                   ht_incidence_origin + ht_incidence_transit +
+                   ht_incidence_destination +
+                   year.factor + cowcode_factor, 
+                 data=df.media)
+
+
+# Save table
+var.labs <- c("In report", "First year in report", "Coverage (lagged)",
+              "Worse civil liberties", "GDP per capita (logged)",
+              "2000 TIP protocol ratification", "Population (logged)",
+              "Trafficking intensity in countries of origin", 
+              "Trafficking intensity in transit countries", 
+              "Trafficking intensity in destination countries")
+
+col.labs <- c("Model 4.1.1", "Model 4.1.2")
+
+ses <- list(get.or.se(model4.1.1), get.or.se(model4.1.2))
+
+extra.lines <- list(c("Year fixed effects", rep("Yes", 2)),
+                    c("Country fixed effects", rep("Yes", 2)))
+
+title <- "Table A4.1: Determinants of receiving increased coverage of TIP issues."
+notes <- "All explanatory variables are lagged one period unless otherwise noted."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a4_1.html")
+
+stargazer(model4.1.1, model4.1.2,
+          type="html", out=out.file, out.header=TRUE,
+          p.auto=FALSE, no.space=TRUE, omit="cowcode|year\\.",
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="Logged coverage", se=ses,
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# Export prediction data
+# Determine which country coefficient is the most average/median
+# Just the COW coefficients
+coefs.cow <- tidy(model4.1.1) %>%
+  filter(grepl("cowcode", term))
+
+# Mean and median COW coefficients
+coefs.cow.avg <- coefs.cow %>%
+  summarise(coef.mean = mean(estimate),
+            coef.median = median(estimate))
+
+# Find closest actual coefficient
+possible.coefs <- coefs.cow %>%
+  arrange(estimate) %>% select(estimate) %>% c %>% unlist
+
+closest.cow <- coefs.cow %>% 
+  filter(estimate == possible.coefs[findInterval(coefs.cow.avg$coef.median, 
+                                                 possible.coefs)]) %>%
+  mutate(cow = gsub("\\D+", "", term))
+
+# Manually find closest coefficient (to get a more "normal" country)
+coefs.cow %>%
+  mutate(country = countrycode(gsub("\\D+", "", term), "cown", "country.name")) %>%
+  filter(estimate < coefs.cow.avg$coef.median + 0.1,
+         estimate > coefs.cow.avg$coef.median - 0.1)
+
+# Predict number of TIP-related stories
+# new.data.covars <- model4.1.1$model %>%
+#   summarise_each(funs(mean), -c(year.factor, cowcode_factor)) %>%
+#   mutate(year.factor = factor(2005),
+#          cowcode_factor = factor(92),
+#          index = 1) %>%
+#   select(-inreport)
+# 
+# new.data <- data_frame(inreport = c(0, 1), index = 1) %>% 
+#   left_join(new.data.covars, by="index") %>%
+#   select(-index)
+# 
+# filter(tidy(model4.1.1), term == "inreport") %>%
+#   mutate(adjusted = exp(estimate))
+
+coverage.predicted <- augment(model4.1.1) %>%
+  group_by(inreport) %>%
+  summarise(avg.logstory = mean(.fitted),
+            se.logstory = mean(.se.fit),
+            upper = avg.logstory + (qnorm(0.975) * se.logstory),
+            lower = avg.logstory + (qnorm(0.025) * se.logstory)) %>%
+  mutate_each(funs(exp = exp)) %>%
+  mutate(inreport = factor(inreport, levels=0:1, labels=c("Not in report", "In report")))
+
+write_csv(coverage.predicted, path=file.path(PROJHOME, "data", "original",
+                                             "data_figureA_4_media_predict.csv"))
+
+
+# -----------
+# Chapter 5
+# -----------
+# Table A5.1: Determinants of documented reactions in cables
+# ("Reaction 4" at http://stats.andrewheiss.com/judith/chapter_5/report.html),
+# without interaction term
+model5.1.1 <- glm(reactionnomedia ~ tier_2 + pressure +
+                    logeconasstP_1, 
+                  data=df.reactions,
+                  family=binomial(link="logit"))
+
+# ("Reaction 4" at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model5.1.2 <- glm(reactionnomedia ~ tier_2 + pressure +
+                    logeconasstP_1 + pressure * logeconasstP_1, 
+                  data=df.reactions,
+                  family=binomial(link="logit"))
+
+# ("Reaction 5" at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model5.1.3 <- glm(reactionnomedia ~ tier_2 + tier_25 + tier_3 +
+                    logeconasstP_1 + loggdppercap_1 + logpop_1 + 
+                    newus_share_tot_trade1 + totalfreedom1 + 
+                    ratproto2000_1 + loght_news_country, 
+                  data=df.reactions,
+                  family=binomial(link="logit"))
+
+
+# Save table
+var.labs <- c("Tier 2", "US pressure (Watchlist or Tier 3)", "Watchlist", "Tier 3",
+              "US aid (logged)", "US aid (logged) × US pressure",
+              "GDP per capita (logged)", "Population (logged)", 
+              "Share of total trade with US",
+              "Worse total freedom",
+              "2000 TIP protocol ratification",
+              "Human trafficking news (logged)")
+col.labs <- c("Model 5.1.1", "Model 5.1.2", "Model 5.1.3")
+
+ses <- list(get.or.se(model5.1.1), get.or.se(model5.1.2),
+            get.or.se(model5.1.3))
+
+extra.lines <- list(c("Pseudo R-squared",
+                      sapply(list(model5.1.1, model5.1.2, model5.1.3), 
+                             calc.pseudo.r.squared)))
+
+title <- "Table A5.1: Determinants of observing a reaction to the TIP report in Wikileaks cables."
+notes <- "Logit model; odds ratios reported. Standard errors in parentheses. All explanatory variables are lagged one period."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a5_1.html")
+
+stargazer(model5.1.1, model5.1.2, model5.1.3,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="Reaction in cables", se=ses,
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# Coefficient plot
+models <- list("Model 5.1.3" = model5.1.3)
+
+plot.data <- models %>%
+  purrr::map_df(tidy, exponentiate=TRUE, .id="model.name") %>%
+  filter(term != "(Intercept)") %>%
+  mutate(xmin = estimate + (qnorm(0.025) * std.error),
+         xmax = estimate + (qnorm(0.975) * std.error)) %>%
+  left_join(coef.names, by="term") %>%
+  mutate(model.name = factor(model.name, levels=unique(model.name),
+                             ordered=TRUE)) %>%
+  mutate(term = factor(term, levels=tail(names(model5.1.3$coefficients), -1),
+                       ordered=TRUE)) %>%
+  arrange(term) %>%
+  mutate(clean.name = factor(clean.name, levels=rev(unique(clean.name)),
+                             ordered=TRUE))
+
+coef.plot <- ggplot(plot.data, aes(y=clean.name, x=estimate)) + 
+  geom_vline(xintercept=1, colour="grey50", alpha=0.6, size=0.5) + 
+  geom_pointrangeh(aes(xmin=xmin, xmax=xmax), size=0.2) + 
+  coord_cartesian(xlim=c(0, 6.5)) +
+  labs(x="Odds ratio", y=NULL) +
+  theme_clean(10)
+
+filename <- "figure5_6_coef_plot"
+width <- 4.5
+height <- 3
+ggsave(coef.plot, filename=file.path(PROJHOME, "output", "figures",
+                                     paste0(filename, ".pdf")), 
+       width=width, height=height, device=cairo_pdf)
+ggsave(coef.plot, filename=file.path(PROJHOME, "output", "figures",
+                                     paste0(filename, ".png")),
+       width=width, height=height, type="cairo", dpi=300)
+
+fig5.6.n <- sprintf("N = %s", model5.1.3$df.null + 1)
+
+caption <- c("Figure 5.6: Odds ratios of Model 5.1.3.",
+             "Logit model of probability of a documented reaction.",
+             fig5.6.n,
+             "Source: Author’s data.") %>%
+  paste0(collapse="\n")
+cat(caption, file=file.path(PROJHOME, "output", "figures",
+                            paste0(filename, ".txt")))
+
+
+# -----------
+# Chapter 6
+# -----------
+# Table A6.1: Time to TIP criminalization
+# (Model 3.1 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model6.1.1 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 + 
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 + 
+                      missinfo8_2 + ht_incidence_origin + 
+                      ht_incidence_transit + ht_incidence_destination + 
+                      cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model6.1.1.fit <- summary(survfit(model6.1.1))$table
+
+# (Model 3.2 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model6.1.2 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 + 
+                    fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 + 
+                    missinfo8_2 + logpop_1 + ngos_ave + loggdppercap_1 + 
+                    corruption_1 + cluster(name),
+                  data=df.survivalized.crim, ties="efron")
+model6.1.2.fit <- summary(survfit(model6.1.2))$table
+
+# (Model 3.3 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model6.1.3 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 + 
+                    fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 + 
+                    missinfo8_2 + logeconasstP_1 + cluster(name),
+                  data=df.survivalized.crim, ties="efron")
+model6.1.3.fit <- summary(survfit(model6.1.3))$table
+
+
+# Save table
+var.labs <- c("In report", "Share of women in parliament", "Worse civil liberties",
+              "Regional density of criminalization", "2000 TIP protocol ratification",
+              "Missing information (t−2)", 
+              "Trafficking intensity in countries of origin", 
+              "Trafficking intensity in transit countries", 
+              "Trafficking intensity in destination countries",
+              "Total population (logged)",
+              "NGO density", "GDP per capita (logged)", "Corruption", 
+              "US aid (logged)")
+col.labs <- c("Model 6.1.1", "Model 6.1.2", "Model 6.1.3")
+
+ses <- list(get.or.se(model6.1.1), get.or.se(model6.1.2),
+            get.or.se(model6.1.3))
+
+extra.lines <- list(c("Number of countries", 
+                      c(model6.1.1.fit["n.max"], model6.1.2.fit["n.max"],
+                        model6.1.3.fit["n.max"])),
+                    c("Number of criminalizations", 
+                      c(model6.1.1.fit["events"], model6.1.2.fit["events"],
+                        model6.1.3.fit["events"])))
+
+title <- "Table A6.1: Time to TIP criminalization."
+notes <- "Robust standard errors in parentheses. All explanatory variables are lagged one period unless otherwise noted."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a6_1.html")
+
+stargazer(model6.1.1, model6.1.2, model6.1.3,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, se=ses, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="Time to TIP criminalization", 
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# Table A6.2: Time to TIP criminalization
+# (Model 4.1 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model6.2.1 <- coxph(Surv(start_time, yrfromj2, fail) ~ tier1_1 + tier1_2 + 
+                      tier1_25 + tier1_3 + women1 + fh_cl1 + corrected_regcrim1_1 +
+                      ratproto2000_1 + missinfo8_2 + ht_incidence_origin + 
+                      ht_incidence_transit + ht_incidence_destination + 
+                      cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model6.2.1.fit <- summary(survfit(model6.2.1))$table
+
+# (Model 4.2 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model6.2.2 <- coxph(Surv(start_time, yrfromj2, fail) ~ tier1_1 + tier1_2 + 
+                      tier1_25 + tier1_3 + women1 + fh_cl1 + corrected_regcrim1_1 +
+                      ratproto2000_1 + missinfo8_2 + logpop_1 + ngos_ave + 
+                      logeconasstP_1 + loggdppercap_1 + corruption_1 + 
+                      cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model6.2.2.fit <- summary(survfit(model6.2.2))$table
+
+# (Model 4.4 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model6.2.3 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + new_watch3 + 
+                      new_watch2 + new_watch1 + women1 + fh_cl1 + 
+                      corrected_regcrim1_1 + ratproto2000_1 + missinfo8_2 + 
+                      cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model6.2.3.fit <- summary(survfit(model6.2.3))$table
+
+
+# Save table
+var.labs <- c("Tier 1", "Tier 2", "Watch list", "Tier 3", "In report", 
+              "First demotion (t−3)", "First demotion (t−2)", 
+              "First demotion (t−1)", "Share of women in parliament", 
+              "Worse civil liberties", "Regional density of criminalization", 
+              "2000 TIP protocol ratification", "Missing information",
+              "Trafficking intensity in countries of origin", 
+              "Trafficking intensity in transit countries", 
+              "Trafficking intensity in destination countries",
+              "Total population (logged)", "NGO density", "US aid (logged)", 
+              "GDP per capita (logged)", "Corruption")
+col.labs <- c("Model 6.2.1", "Model 6.2.2", "Model 6.2.3")
+
+ses <- list(get.or.se(model6.2.1), get.or.se(model6.2.2),
+            get.or.se(model6.2.3))
+
+extra.lines <- list(c("Number of countries", 
+                      c(model6.2.1.fit["n.max"], model6.2.2.fit["n.max"],
+                        model6.2.3.fit["n.max"])),
+                    c("Number of criminalizations", 
+                      c(model6.2.1.fit["events"], model6.2.2.fit["events"],
+                        model6.2.3.fit["events"])))
+
+title <- "Table A6.2: Time to TIP criminalization."
+notes <- "Robust standard errors in parentheses. All explanatory variables are lagged one period unless otherwise noted."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a6_2.html")
+
+stargazer(model6.2.1, model6.2.2, model6.2.3,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, se=ses, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="Time to TIP criminalization", 
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# A6.3: Determinants of TIP criminalization
+df.model6.3 <- df.reactions %>%
+  filter(lag(adjbicrimlevel) == 0 & year > 2001 & year < 2011)
+# (Model 5.2 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model6.3.1 <- glm(crim1 ~ reactionnomedia1 + women1 + totalfreedom1 + 
+                    adj_ratproto2000_1 + bigaid1 + corrected_regcrim1_1 + as.factor(year),
+                  data=df.model6.3,
+                  family=binomial(link="logit"))
+
+# (Model 5.4 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model6.3.2 <- glm(crim1 ~ totalreactionnomedia1 + women1 + totalfreedom1 + 
+                    adj_ratproto2000_1 + bigaid1 + corrected_regcrim1_1 + as.factor(year),
+                  data=df.model6.3,
+                  family=binomial(link="logit"))
+
+
+# Save table
+var.labs <- c("Reactions (no media)", "Total reactions (no media)", 
+              "Share of women in parliament", 
+              "Worse total freedom (political rights + civil liberties)", 
+              "2000 TIP protocol ratification", "Aid greater than $100 million", 
+              "Regional density of criminalization")
+col.labs <- c("Model 6.3.1", "Model 6.3.2")
+
+ses <- list(get.or.se(model6.3.1), get.or.se(model6.3.2))
+
+extra.lines <- list(c("Year fixed effects",
+                      rep("Yes", 2)),
+                    c("Pseudo R-squared",
+                      sapply(list(model6.3.1, model6.3.2), 
+                             calc.pseudo.r.squared)))
+
+title <- "Table A6.3: Determinants of TIP criminalization."
+notes <- "Logit model; odds ratios reported. Robust standard errors in parentheses. All explanatory variables are lagged one period."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a6_3.html")
+
+stargazer(model6.3.1, model6.3.2,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, p.auto=FALSE, no.space=TRUE, omit="factor\\(year",
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="Criminalization", se=ses,
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+# Coefficient plot
+models <- list("Model 6.1.2    " = model6.1.2,
+               "Model 6.2.2    " = model6.2.2,
+               "Model 6.2.3" = model6.2.3)
+
+vars.included <- c("inreport1", "tier1_1", "tier1_2", "tier1_25", "tier1_3", "new_watch3", "new_watch2", "new_watch1")
+vars.search <- paste0(vars.included, collapse="|")
+
+plot.data <- models %>%
+  purrr::map_df(tidy, exponentiate=TRUE, .id="model.name") %>%
+  filter(stringr::str_detect(term, vars.search)) %>%
+  mutate(xmin = estimate + (qnorm(0.025) * std.error),
+         xmax = estimate + (qnorm(0.975) * std.error)) %>%
+  left_join(coef.names, by="term") %>%
+  mutate(model.name = factor(model.name, levels=unique(model.name),
+                             ordered=TRUE)) %>%
+  mutate(term = factor(term, levels=vars.included, ordered=TRUE)) %>%
+  arrange(term) %>%
+  mutate(clean.name = factor(clean.name, levels=rev(unique(clean.name)),
+                             ordered=TRUE))
+
+coef.plot <- ggplot(plot.data, aes(y=clean.name, x=estimate,
+                                   colour=model.name, shape=model.name)) + 
+  geom_vline(xintercept=1, colour="grey50", alpha=0.6, size=0.5) + 
+  geom_pointrangeh(aes(xmin=xmin, xmax=xmax), size=0.2, 
+                   position=position_dodgev(height=.7)) + 
+  scale_colour_manual(values=c("grey70", "black", "black"), name="") +
+  scale_shape_manual(values=c(19, 19, 17), name="") +
+  coord_cartesian(xlim=c(0, 10)) +
+  labs(x="Odds ratio", y=NULL) +
+  theme_clean(10) + theme(legend.key.width=unit(2, "line"),
+                          legend.key = element_blank())
+
+filename <- "figure6_7_coef_plot"
+width <- 4.5
+height <- 3
+ggsave(coef.plot, filename=file.path(PROJHOME, "output", "figures",
+                                     paste0(filename, ".pdf")), 
+       width=width, height=height, device=cairo_pdf)
+ggsave(coef.plot, filename=file.path(PROJHOME, "output", "figures",
+                                     paste0(filename, ".png")),
+       width=width, height=height, type="cairo", dpi=300)
+
+caption <- c("Figure 6.7: Odds ratios of the variables representing scorecard diplomacy.",
+             sprintf("Duration models of time to criminalization. N = %s (models 6.1.2 and 6.2.5) and %s (model 6.2.3).", 
+                     format(model6.1.2$n, big.mark=",", trim=TRUE),
+                     format(model6.2.3$n, big.mark=",", trim=TRUE)),
+             "Source: Author’s data. For full results, see the Results Appendix.") %>%
+  paste0(collapse="\n")
+cat(caption, file=file.path(PROJHOME, "output", "figures",
+                            paste0(filename, ".txt")))
+
+
+# Coefficient plot
+models <- list("Model 6.3.1    " = model6.3.1,
+               "Model 6.3.2" = model6.3.2)
+
+vars.included <- c("reactionnomedia1", "totalreactionnomedia1")
+vars.search <- paste0(vars.included, collapse="|")
+
+plot.data <- models %>%
+  purrr::map_df(tidy, exponentiate=TRUE, .id="model.name") %>%
+  filter(stringr::str_detect(term, vars.search)) %>%
+  mutate(xmin = estimate + (qnorm(0.025) * std.error),
+         xmax = estimate + (qnorm(0.975) * std.error)) %>%
+  left_join(coef.names, by="term") %>%
+  mutate(model.name = factor(model.name, levels=unique(model.name),
+                             ordered=TRUE)) %>%
+  mutate(term = factor(term, levels=vars.included, ordered=TRUE)) %>%
+  arrange(term) %>%
+  mutate(clean.name = factor(clean.name, levels=rev(unique(clean.name)),
+                             ordered=TRUE))
+
+coef.plot <- ggplot(plot.data, aes(y=clean.name, x=estimate,
+                                   colour=model.name, shape=model.name)) + 
+  geom_vline(xintercept=1, colour="grey50", alpha=0.6, size=0.5) + 
+  geom_pointrangeh(aes(xmin=xmin, xmax=xmax), size=0.2, 
+                   position=position_dodgev(height=.7)) + 
+  scale_colour_manual(values=c("black", "grey70"), name="") +
+  scale_shape_manual(values=c(19, 17), name="") +
+  coord_cartesian(xlim=c(0, 3)) +
+  labs(x="Odds ratio", y=NULL) +
+  theme_clean(10) + theme(legend.key.width=unit(2, "line"),
+                          legend.key = element_blank())
+
+filename <- "figure6_9_coef_plot"
+width <- 4.5
+height <- 2
+ggsave(coef.plot, filename=file.path(PROJHOME, "output", "figures",
+                                     paste0(filename, ".pdf")), 
+       width=width, height=height, device=cairo_pdf)
+ggsave(coef.plot, filename=file.path(PROJHOME, "output", "figures",
+                                     paste0(filename, ".png")),
+       width=width, height=height, type="cairo", dpi=300)
+
+caption <- c("Figure 6.9: Odds ratios of the variables representing scorecard diplomacy.",
+             sprintf("Logit models of probability of criminalization in the next year. N = %s.", 
+                     model6.3.1$df.null + 1),
+             "Source: Author’s data. For full results, see the Results Appendix.") %>%
+  paste0(collapse="\n")
+cat(caption, file=file.path(PROJHOME, "output", "figures",
+                            paste0(filename, ".txt")))
+
+
+# Table A6.4: The effect of TIP-specific funding on criminalization
+model6.4.1 <- coxph(Surv(start_time, yrfromj2, fail) ~ log.total.funding1 +
+                      women1 + totalfreedom1 + ratproto2000 +
+                      corrected_regcrim1_1 + missinfo8_2 +
+                      cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+
+model6.4.1.fit <- summary(survfit(model6.4.1))$table
+
+# Save table
+var.labs <- c("Total US funding for TIP (logged)", "Share of women in parliament",
+              "Worse total freedom (political rights + civil liberties)",
+              "2000 TIP protocol ratification", 
+              "Regional density of criminalization",
+              "Missing information")
+col.labs <- c("Model 6.4.1")
+
+ses <- list(get.or.se(model6.4.1))
+
+extra.lines <- list(c("Number of countries", 
+                      c(model6.4.1.fit["n.max"])),
+                    c("Number of criminalizations", 
+                      c(model6.4.1.fit["events"])))
+
+title <- "Table A6.4: The effect of TIP-specific funding on criminalization."
+notes <- "Robust standard errors in parentheses. All explanatory variables are lagged one period unless otherwise noted."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a6_4.html")
+
+stargazer(model6.4.1,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, se=ses, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="Time to TIP criminalization", 
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# -----------
+# Chapter 7
+# -----------
+# Table A7.1: Time to TIP criminalization (with presence in report, aid)
+# (Model 3.4 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model7.1.1 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + logeconasstP_1 +
+                      inreport1 * logeconasstP_1 + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.1.1.fit <- summary(survfit(model7.1.1))$table
+
+# (Model 3.5 at http://stats.andrewheiss.com/judith/chapter_5/report.html)
+model7.1.2 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + econasstPgdp_1_1000 +
+                      econasstPgdp_1_1000 * inreport1 + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.1.2.fit <- summary(survfit(model7.1.2))$table
+
+model7.1.3 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                       fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                       missinfo8_2 + aid.us.total.perc_lag +
+                       aid.us.total.perc_lag * inreport1 + cluster(name),
+                     data=df.survivalized.crim, ties="efron")
+model7.1.3.fit <- summary(survfit(model7.1.3))$table
+
+model7.1.4 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + logeconasstP_1 +
+                      inreport1 * logeconasstP_1 + cluster(name),
+                    data=df.survivalized.crim.dac, ties="efron", model=TRUE)
+model7.1.4.fit <- summary(survfit(model7.1.4))$table
+
+model7.1.5 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + econasstPgdp_1_1000 +
+                      econasstPgdp_1_1000 * inreport1 + cluster(name),
+                    data=df.survivalized.crim.dac, ties="efron")
+model7.1.5.fit <- summary(survfit(model7.1.5))$table
+
+model7.1.6 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                       fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                       missinfo8_2 + aid.us.total.perc_lag +
+                       aid.us.total.perc_lag * inreport1 + cluster(name),
+                     data=df.survivalized.crim.dac, ties="efron")
+model7.1.6.fit <- summary(survfit(model7.1.6))$table
+
+# Save table
+var.labs <- c("In report", "Share of women in parliament", "Worse civil liberties",
+              "Regional density of criminalization", "2000 TIP protocol ratification",
+              "Missing information (t−2)",
+              "US aid (logged)", "US aid × In report",
+              "US aid as share of GDP (logged)",
+              "US aid as share of GDP × In report",
+              "US aid as share of total aid (logged)",
+              "US aid as share of total aid (logged) × In report")
+col.labs <- c("Model 7.1.1", "Model 7.1.2", "Model 7.1.3", "Model 7.1.4",
+              "Model 7.1.5", "Model 7.1.6")
+
+ses <- list(get.or.se(model7.1.1), get.or.se(model7.1.2),
+            get.or.se(model7.1.3), get.or.se(model7.1.4),
+            get.or.se(model7.1.5), get.or.se(model7.1.6))
+
+extra.lines <- list(c("Number of countries",
+                      c(model7.1.1.fit["n.max"], model7.1.2.fit["n.max"],
+                        model7.1.3.fit["n.max"], model7.1.4.fit["n.max"],
+                        model7.1.5.fit["n.max"], model7.1.6.fit["n.max"])),
+                    c("Number of criminalizations",
+                      c(model7.1.1.fit["events"], model7.1.2.fit["events"],
+                        model7.1.3.fit["events"], model7.1.4.fit["events"],
+                        model7.1.5.fit["events"], model7.1.6.fit["events"])),
+                    c("OECD DAC eligible countries only",
+                      c(rep("No", 3), rep("Yes", 3))))
+
+title <- "Table A7.1: Time to TIP criminalization: presence in report (aid)."
+notes <- "Robust standard errors in parentheses. All explanatory variables are lagged one period unless otherwise noted."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a7_1.html")
+
+stargazer(model7.1.1, model7.1.2, model7.1.3, model7.1.4,
+          model7.1.5, model7.1.6,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, se=ses, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs,
+          dep.var.caption="Time to TIP criminalization",
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# Table A7.2: Time to TIP criminalization (with presence in report, trade)
+model7.2.1 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + newus_tradeshare_gdp1 +
+                      newus_tradeshare_gdp1 * inreport1 + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.2.1.fit <- summary(survfit(model7.2.1))$table
+
+model7.2.2 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + has.bit.sig.with.us_lag +
+                      has.bit.sig.with.us_lag * inreport1 + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.2.2.fit <- summary(survfit(model7.2.2))$table
+
+model7.2.3 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + us.military.aid.log_lag +
+                      us.military.aid.log_lag * inreport1 + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.2.3.fit <- summary(survfit(model7.2.3))$table
+
+model7.2.4 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + fdi.from.us.log_lag +
+                      fdi.from.us.log_lag * inreport1 + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.2.4.fit <- summary(survfit(model7.2.4))$table
+
+model7.2.5 <- coxph(Surv(start_time, yrfromj2, fail) ~ inreport1 + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + trade.to.us.log_lag +
+                      trade.to.us.log_lag * inreport1 + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.2.5.fit <- summary(survfit(model7.2.5))$table
+
+# Save table
+var.labs <- c("In report", "Share of women in parliament", "Worse civil liberties",
+              "Regional density of criminalization", "2000 TIP protocol ratification",
+              "Missing information (t−2)",
+              "US trade as share of GDP (logged)",
+              "US trade as share of GDP (logged) × US pressure",
+              "Has BIT with US",
+              "Has BIT with US × In report",
+              "US military aid (logged)",
+              "US military aid (logged) × In report",
+              "FDI from US (logged)",
+              "FDI from US (logged) × In report",
+              "Imports to US (logged)",
+              "Imports to US (logged) × In report")
+col.labs <- c("Model 7.2.1", "Model 7.2.2", "Model 7.2.3", "Model 7.2.4",
+              "Model 7.2.5")
+
+ses <- list(get.or.se(model7.2.1), get.or.se(model7.2.2),
+            get.or.se(model7.2.3), get.or.se(model7.2.4),
+            get.or.se(model7.2.5))
+
+extra.lines <- list(c("Number of countries",
+                      c(model7.2.1.fit["n.max"], model7.2.2.fit["n.max"],
+                        model7.2.3.fit["n.max"], model7.2.4.fit["n.max"],
+                        model7.2.5.fit["n.max"])),
+                    c("Number of criminalizations",
+                      c(model7.2.1.fit["events"], model7.2.2.fit["events"],
+                        model7.2.3.fit["events"], model7.2.4.fit["events"],
+                        model7.2.5.fit["events"])))
+
+title <- "Table A7.2: Time to TIP criminalization: presence in report (trade)."
+notes <- "Robust standard errors in parentheses. All explanatory variables are lagged one period unless otherwise noted."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a7_2.html")
+
+stargazer(model7.2.1, model7.2.2, model7.2.3, model7.2.4, model7.2.5,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, se=ses, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs,
+          dep.var.caption="Time to TIP criminalization",
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# Table A7.3: Time to TIP criminalization (with US pressure (2.5 or 3 rating), aid)
+model7.3.1 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                           fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                           missinfo8_2 + logeconasstP_1 +
+                           pressure_lag * logeconasstP_1 + cluster(name),
+                         data=df.survivalized.crim, ties="efron", model=TRUE)
+model7.3.1.fit <- summary(survfit(model7.3.1))$table
+
+model7.3.2 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                           fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                           missinfo8_2 + econasstPgdp_1_1000 +
+                           econasstPgdp_1_1000 * pressure_lag + cluster(name),
+                         data=df.survivalized.crim, ties="efron")
+model7.3.2.fit <- summary(survfit(model7.3.2))$table
+
+model7.3.3 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                       fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                       missinfo8_2 + aid.us.total.perc_lag +
+                       aid.us.total.perc_lag * pressure_lag + cluster(name),
+                     data=df.survivalized.crim, ties="efron")
+model7.3.3.fit <- summary(survfit(model7.3.3))$table
+
+model7.3.4 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                           fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                           missinfo8_2 + logeconasstP_1 +
+                           pressure_lag * logeconasstP_1 + cluster(name),
+                         data=df.survivalized.crim.dac, ties="efron", model=TRUE)
+model7.3.4.fit <- summary(survfit(model7.3.4))$table
+
+model7.3.5 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                           fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                           missinfo8_2 + econasstPgdp_1_1000 +
+                           econasstPgdp_1_1000 * pressure_lag + cluster(name),
+                         data=df.survivalized.crim.dac, ties="efron")
+model7.3.5.fit <- summary(survfit(model7.3.5))$table
+
+model7.3.6 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                       fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                       missinfo8_2 + aid.us.total.perc_lag +
+                       aid.us.total.perc_lag * pressure_lag + cluster(name),
+                     data=df.survivalized.crim.dac, ties="efron")
+model7.3.6.fit <- summary(survfit(model7.3.6))$table
+
+
+# Save table
+var.labs <- c("US pressure", "Share of women in parliament", "Worse civil liberties",
+              "Regional density of criminalization", "2000 TIP protocol ratification",
+              "Missing information (t−2)",
+              "US aid (logged)", "US aid × US pressure",
+              "US aid as share of GDP (logged)",
+              "US aid as share of GDP × US pressure",
+              "US aid as share of total aid (logged)",
+              "US aid as share of total aid (logged) × US pressure")
+col.labs <- c("Model 7.3.1", "Model 7.3.2", "Model 7.3.3", "Model 7.3.4",
+              "Model 7.3.5", "Model 7.3.6")
+
+ses <- list(get.or.se(model7.3.1), get.or.se(model7.3.2),
+            get.or.se(model7.3.3), get.or.se(model7.3.4),
+            get.or.se(model7.3.5), get.or.se(model7.3.6))
+
+extra.lines <- list(c("Number of countries",
+                      c(model7.3.1.fit["n.max"], model7.3.2.fit["n.max"],
+                        model7.3.3.fit["n.max"], model7.3.4.fit["n.max"],
+                        model7.3.5.fit["n.max"], model7.3.6.fit["n.max"])),
+                    c("Number of criminalizations",
+                      c(model7.3.1.fit["events"], model7.3.2.fit["events"],
+                        model7.3.3.fit["events"], model7.3.4.fit["events"],
+                        model7.3.5.fit["events"], model7.3.6.fit["events"])),
+                    c("OECD DAC eligible countries only",
+                      c(rep("No", 3), rep("Yes", 3))))
+
+title <- "Table A7.3: Time to TIP criminalization: US pressure (aid)."
+notes <- "Robust standard errors in parentheses. All explanatory variables are lagged one period unless otherwise noted."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a7_3.html")
+
+stargazer(model7.3.1, model7.3.2, model7.3.3, model7.3.4,
+          model7.3.5, model7.3.6, 
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, se=ses, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs,
+          dep.var.caption="Time to TIP criminalization",
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# Table A7.4: Time to TIP criminalization (with US pressure (2.5 or 3 rating), trade)
+model7.4.1 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + newus_tradeshare_gdp1 +
+                      newus_tradeshare_gdp1 * pressure_lag + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.4.1.fit <- summary(survfit(model7.4.1))$table
+
+model7.4.2 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + has.bit.sig.with.us_lag +
+                      has.bit.sig.with.us_lag * pressure_lag + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.4.2.fit <- summary(survfit(model7.4.2))$table
+
+model7.4.3 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + us.military.aid.log_lag +
+                      us.military.aid.log_lag * pressure_lag + cluster(name),
+                    data=df.survivalized.crim, ties="efron", model=TRUE)
+model7.4.3.fit <- summary(survfit(model7.4.3))$table
+
+model7.4.4 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + fdi.from.us.log_lag +
+                      fdi.from.us.log_lag * pressure_lag + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.4.4.fit <- summary(survfit(model7.4.4))$table
+
+model7.4.5 <- coxph(Surv(start_time, yrfromj2, fail) ~ pressure_lag + women1 +
+                      fh_cl1 + corrected_regcrim1_1 + ratproto2000_1 +
+                      missinfo8_2 + trade.to.us.log_lag +
+                      trade.to.us.log_lag * pressure_lag + cluster(name),
+                    data=df.survivalized.crim, ties="efron")
+model7.4.5.fit <- summary(survfit(model7.4.5))$table
+
+
+# Save table
+var.labs <- c("US pressure", "Share of women in parliament", "Worse civil liberties",
+              "Regional density of criminalization", "2000 TIP protocol ratification",
+              "Missing information (t−2)",
+              "US trade as share of GDP (logged)",
+              "US trade as share of GDP (logged) × US pressure",
+              "Has BIT with US",
+              "Has BIT with US × US pressure",
+              "US military aid (logged)",
+              "US military aid (logged) × US pressure",
+              "FDI from US (logged)",
+              "FDI from US (logged) × US pressure",
+              "Imports to US (logged)",
+              "Imports to US (logged) × US pressure")
+col.labs <- c("Model 7.4.1", "Model 7.4.2", "Model 7.4.3", "Model 7.4.4",
+              "Model 7.4.5")
+
+ses <- list(get.or.se(model7.4.1), get.or.se(model7.4.2),
+            get.or.se(model7.4.3), get.or.se(model7.4.4),
+            get.or.se(model7.4.5))
+
+extra.lines <- list(c("Number of countries",
+                      c(model7.4.1.fit["n.max"], model7.4.2.fit["n.max"],
+                        model7.4.3.fit["n.max"], model7.4.4.fit["n.max"],
+                        model7.4.5.fit["n.max"])),
+                    c("Number of criminalizations",
+                      c(model7.4.1.fit["events"], model7.4.2.fit["events"],
+                        model7.4.3.fit["events"], model7.4.4.fit["events"],
+                        model7.4.5.fit["events"])))
+
+title <- "Table A7.4: Time to TIP criminalization: US pressure (trade)."
+notes <- "Robust standard errors in parentheses. All explanatory variables are lagged one period unless otherwise noted."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a7_4.html")
+
+stargazer(model7.4.1, model7.4.2, model7.4.3, model7.4.4, model7.4.5, 
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, se=ses, p.auto=FALSE, no.space=TRUE,
+          covariate.labels=var.labs, column.labels=col.labs,
+          dep.var.caption="Time to TIP criminalization",
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# Table A7.5: Determinants of criminalization (democracy × treatments)
+df.interaction.models <- df.complete %>% 
+  filter(lag(adjbicrimlevel) == 0 & year > 2001 & year < 2011)
+
+# Model 1.1.2(2) at http://stats.andrewheiss.com/judith/chapter_5/interactions.html
+model7.5.1 <- glm(crim1 ~ fh_cl1 + inreport1 + fh_cl1 * inreport1 + 
+                    women1 + ratproto2000_1 + 
+                    corrected_regcrim1_1 + missinfo8_2 + year.factor,
+                  data=df.interaction.models,
+                  family=binomial(link="logit"))
+
+# Model 2.1.2(2) at http://stats.andrewheiss.com/judith/chapter_5/interactions.html
+model7.5.2 <- glm(crim1 ~ fh_cl1 + low_tier1 + fh_cl1 * low_tier1 + 
+                    women1 + ratproto2000_1 + 
+                    corrected_regcrim1_1 + missinfo8_2 + year.factor,
+                  data=df.interaction.models,
+                  family=binomial(link="logit"))
+
+# Model 3.1.2(2) at http://stats.andrewheiss.com/judith/chapter_5/interactions.html
+model7.5.3 <- glm(crim1 ~ fh_cl1 + 
+                    new_watch3 + new_watch2 + new_watch1 + 
+                    fh_cl1 * new_watch3 + 
+                    fh_cl1 * new_watch2 + 
+                    fh_cl1 * new_watch1 + 
+                    women1 + ratproto2000_1 + 
+                    corrected_regcrim1_1 + missinfo8_2 + year.factor,
+                  data=df.interaction.models,
+                  family=binomial(link="logit"))
+
+
+# Save table
+var.labs <- c("Worse democracy (Freedom House civil liberties)", 
+              "In TIP report", "Lowest tier",
+              "First demotion (t−3)", "First demotion (t−2)", 
+              "First demotion (t−1)",
+              "Share of women in parliament", 
+              "2000 TIP protocol ratification", 
+              "Regional density of criminalization",
+              "Missing info",
+              "Worse democracy × In TIP report", "Worse democracy × Lowest tier",
+              "Worse democracy × First demotion (t−3)", 
+              "Worse democracy × First demotion (t−2)", 
+              "Worse democracy × First demotion (t−1)")
+
+col.labs <- c("Model 7.5.1<br>Presence in TIP report", 
+              "Model 7.5.2<br>Lower tier ratings", 
+              "Model 7.5.3<br>Downgrading")
+
+ses <- list(get.or.se(model7.5.1), get.or.se(model7.5.2),
+            get.or.se(model7.5.3))
+
+extra.lines <- list(c("Year fixed effects",
+                      rep("Yes", 3)),
+                    c("Pseudo R-squared",
+                      sapply(list(model7.5.1, model7.5.2, model7.5.3), 
+                             calc.pseudo.r.squared)))
+
+title <- "Table A7.5: Determinants of criminalization—effects of democracy interacted with scorecard diplomacy treatments."
+notes <- "Logit models; odds ratios reported. Standard errors in parentheses. All explanatory variables are lagged one period."
+
+out.file <- file.path(PROJHOME, "output", "tables", "table_a7_5.html")
+
+stargazer(model7.5.1, model7.5.2, model7.5.3,
+          type="html", out=out.file, out.header=TRUE,
+          apply.coef=exp, p.auto=FALSE, no.space=TRUE, omit="year\\.factor",
+          covariate.labels=var.labs, column.labels=col.labs, 
+          dep.var.caption="Criminalization", se=ses,
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          notes.align="l", add.lines=extra.lines, keep.stat=c("n"),
+          notes.label="Notes:", notes=notes, title=title)
+
+
+# Export prediction data for model 6.5.1
+model <- model7.5.1
+
+new.data <- model$model %>%
+  select(-fh_cl1) %>%
+  group_by(inreport1) %>%
+  summarise_each(funs(mean), -(year.factor)) %>%
+  mutate(year.factor = factor(2005)) %>%
+  right_join(expand.grid(fh_cl1 = seq(1, 7, 0.1), 
+                         inreport1 = c(0, 1)), by="inreport1")
+
+plot.predict <- augment(model, newdata=new.data) %>%
+  mutate(prob = model$family$linkinv(.fitted),
+         prob.lower = model$family$linkinv(.fitted - (qnorm(0.95 / 2 + 0.5) * .se.fit)),
+         prob.upper = model$family$linkinv(.fitted + (qnorm(0.95 / 2 + 0.5) * .se.fit)),
+         inreport1 = factor(inreport1, labels=c("Not in report", "In report"),
+                            ordered=TRUE))
+
+saveRDS(plot.predict, file=file.path(PROJHOME, "data", "original",
+                                     "data_figureA_7_report_predict.rds"))
+
+
+# Export prediction data for model 6.5.2
+model <- model7.5.2
+
+new.data <- model$model %>%
+  select(-fh_cl1) %>%
+  group_by(low_tier1) %>%
+  summarise_each(funs(mean), -(year.factor)) %>%
+  mutate(year.factor = factor(2005)) %>%
+  right_join(expand.grid(fh_cl1 = seq(1, 7, 0.1), 
+                         low_tier1 = c(0, 1)), by="low_tier1")
+
+plot.predict <- augment(model, newdata=new.data) %>%
+  mutate(prob = model$family$linkinv(.fitted),
+         prob.lower = model$family$linkinv(.fitted - (qnorm(0.95 / 2 + 0.5) * .se.fit)),
+         prob.upper = model$family$linkinv(.fitted + (qnorm(0.95 / 2 + 0.5) * .se.fit)),
+         low_tier1 = factor(low_tier1, labels=c("1 or 2", "Watchlist or 3"),
+                            ordered=TRUE))
+
+# Save data for book
+saveRDS(plot.predict, file=file.path(PROJHOME, "data", "original",
+                                     "data_figureA_7_lowest_tier_predict.rds"))
+
+
+# Export prediction data for model 6.5.3
+model <- model7.5.3
+
+covars <- model$model %>%
+  select(-fh_cl1, -starts_with("new_watch")) %>%
+  summarise_each(funs(mean), -(year.factor)) %>%
+  mutate(year.factor = factor(2005),
+         id = 1)  # For joining into fully expanded dataframe later
+
+new.combinations <- expand.grid(fh_cl1 = seq(1, 7, 0.1),
+                                new_watch = c("1", "2", "3"))
+
+baseline.combinations <- data_frame(fh_cl1 = seq(1, 7, 0.1)) %>%
+  mutate(new_watch = NA, new_watch1 = 0, new_watch2 = 0, new_watch3 = 0)
+
+new.data <- new.combinations %>%
+  bind_cols(data.frame(model.matrix(fh_cl1 ~ new_watch + 0, 
+                                    data=new.combinations))) %>%
+  bind_rows(baseline.combinations) %>%
+  mutate(id = 1) %>% left_join(covars, by="id") %>%
+  select(-c(id, new_watch))
+
+plot.predict <- augment(model, newdata=new.data) %>%
+  mutate(prob = model$family$linkinv(.fitted),
+         prob.lower = model$family$linkinv(.fitted - (qnorm(0.95 / 2 + 0.5) * .se.fit)),
+         prob.upper = model$family$linkinv(.fitted + (qnorm(0.95 / 2 + 0.5) * .se.fit))) %>%
+  mutate(demote_type = ifelse(new_watch1 == 1, "1 year", NA),
+         demote_type = ifelse(new_watch2 == 1, "2 years", demote_type),
+         demote_type = ifelse(new_watch3 == 1, "3 years", demote_type),
+         demote_type = ifelse(new_watch1 + new_watch2 + new_watch3 == 0, 
+                              "No demotion", demote_type))
+
+saveRDS(plot.predict, file=file.path(PROJHOME, "data", "original",
+                                     "data_figureA_7_downgrade_predict.rds"))
+
+
+# --------------------------------------
+# Summary table of all model variables
+# --------------------------------------
+# Variables to summarize
+model.vars.raw <- read_csv(file.path(PROJHOME, "data", "original", 
+                                     "model_vars.csv"), col_types="ccc")
+
+model.vars <- model.vars.raw %>%
+  mutate(chapter = as.numeric(substr(model, 1, 1)))
+
+# Group variables by chapter
+model.vars.by.chapter <- model.vars %>%
+  group_by(var_name) %>%
+  summarise(chapters = paste(unique(chapter), collapse=", "),
+            num.chapters = length(unique(chapter))) %>%
+  ungroup() %>%
+  mutate(first.chapter = substr(chapters, 1, 1))
+
+# Save grouped list to temporary CSV for hand editing
+model.vars.by.chapter %>%
+  select(var_name, chapters) %>% mutate(label = "") %>%
+  write_csv(path=file.path(PROJHOME, "data", "processed",
+                           "model_vars_labels_WILL_BE_OVERWRITTEN.csv"))
+
+# Load hand-edited list of variables
+model.vars.clean <- read_csv(file.path(PROJHOME, "data", "processed",
+                                       "model_vars_labels.csv")) %>%
+  # Redo chapter calculations since some were hand-adjusted
+  mutate(num.chapters = nchar(chapters),
+         first.chapter = substr(chapters, 1, 1),
+         ignore = ifelse(is.na(ignore), FALSE, TRUE))
+
+vars.df.complete <- model.vars %>%
+  filter(dataset != "df.reactions", dataset != "df.model6.3")
+
+vars.df.reactions <- model.vars %>%
+  filter(dataset == "df.reactions" | dataset == "df.model6.3")
+
+# Create a list of unique variables to eventually select from df.complete
+vars.df.complete.select <- unique(vars.df.complete$var_name)
+
+# Create a list of unique variables to eventually select from df.reactions,
+# omitting any that are already in df.complete
+vars.df.reactions.select <- unique(vars.df.reactions$var_name)[!(unique(
+  vars.df.reactions$var_name) %in% vars.df.complete.select)]
+
+# Summarize variables from df.complete
+vars.df.complete.only <- df.complete %>%
+  filter(year > 2000) %>%
+  mutate(women1 = women1 / 100) %>%
+  select_(.dots = vars.df.complete.select) %>%
+  # Summarize each variable; use zzz because many variables use _ in their
+  # names, which makes tidyr::separate tricky later
+  summarise_each(funs(zzzMean = mean(., na.rm=TRUE),
+                      zzzMedian = median(., na.rm=TRUE),
+                      zzzStdev = sd(., na.rm=TRUE),
+                      zzzMin = min(., na.rm=TRUE),
+                      zzzMax = max(., na.rm=TRUE)))
+
+# Summarize variables from df.reactions
+vars.df.reactions.only <- df.reactions %>% ungroup() %>%
+  filter(year > 2000) %>%
+  mutate(women1 = women1 / 100) %>%
+  select_(.dots = vars.df.reactions.select) %>%
+  summarise_each(funs(zzzMean = mean(., na.rm=TRUE),
+                      zzzMedian = median(., na.rm=TRUE),
+                      zzzStdev = sd(., na.rm=TRUE),
+                      zzzMin = min(., na.rm=TRUE),
+                      zzzMax = max(., na.rm=TRUE)))
+
+# Combine two summaries and convert to nicer format
+vars.all.summary <- bind_cols(vars.df.complete.only, vars.df.reactions.only) %>%
+  gather(key, val) %>%
+  separate(key, c("Variable", "stat"), sep="_zzz") %>%
+  spread(stat, val)
+
+# Separate continuous and proportional variables
+other.prop <- c("aid.us.total.perc_lag", "econasstPgdp_1",
+                "newus_tradeshare_gdp1", "newus_share_tot_trade1", "women1")
+
+vars.all.cont <- vars.all.summary %>%
+  filter(Max != 1) %>%
+  filter(!(Variable %in% other.prop))
+
+vars.all.prop <- vars.all.summary %>%
+  filter(Variable %in% other.prop | Max == 1)
+
+vars.descriptions <- vars.all.summary %>%
+  left_join(model.vars.clean, by=c("Variable" = "var_name")) %>%
+  filter(!ignore) %>%
+  arrange(first.chapter, desc(num.chapters)) %>%
+  select(Variable = label, Description, Source, Chapters = chapters)
+
+
+# Join summary stats to table grouped by chapter
+vars.all.cont.clean <- vars.all.cont %>%
+  left_join(model.vars.clean, by=c("Variable" = "var_name")) %>%
+  filter(!ignore) %>%
+  arrange(first.chapter, desc(num.chapters)) %>%
+  # There are some tiny tiny minimum values; this rounds them for nicer display
+  mutate(Min = ifelse(Min < 0.00001, 0, Min)) %>%
+  mutate_each(funs(comma(., digits=2)), c(Mean, Median, Stdev, Min, Max)) %>%
+  select(Variable = label, Mean, Median, `Standard deviation` = Stdev, Min, Max)
+
+vars.all.prop.clean <- vars.all.prop %>%
+  left_join(model.vars.clean, by=c("Variable" = "var_name")) %>%
+  filter(!ignore) %>%
+  arrange(first.chapter, desc(num.chapters)) %>%
+  mutate_each(funs(comma(., digits=1)), c(Mean, Stdev)) %>%
+  select(Variable = label, `Mean proportion` = Mean, 
+         `Standard deviation` = Stdev)
+
+# Save final clean tables
+caption <- "Table A1.3: Description of all variables used in statistical analysis."
+filename <- "table_a1_3_var_descriptions.txt"
+cat(pandoc.table.return(vars.descriptions, caption=caption),
+    file=file.path(PROJHOME, "output", paste0(filename)))
+
+Pandoc.convert(file.path(PROJHOME, "output", "tables", paste0(filename)),
+               format="html", footer=FALSE, proc.time=FALSE, 
+               options = "-s", open=FALSE)
+
+caption <- "Table A1.4a: Summary of continuous variables used in statistical analysis."
+filename <- "table_a1_4a_var_summary_continuous.txt"
+cat(pandoc.table.return(vars.all.cont.clean, caption=caption),
+    file=file.path(PROJHOME, "output", "tables", paste0(filename)))
+
+Pandoc.convert(file.path(PROJHOME, "output", "tables", paste0(filename)),
+               format="html", footer=FALSE, proc.time=FALSE, 
+               options = "-s", open=FALSE)
+
+caption <- "Table A1.4b: Summary of proportional variables used in statistical analysis."
+filename <- "table_a1_4b_var_summary_proportions.txt"
+cat(pandoc.table.return(vars.all.prop.clean),
+    file=file.path(PROJHOME, "output", "tables", paste0(filename)))
+
+Pandoc.convert(file.path(PROJHOME, "output", "tables", paste0(filename)),
+               format="html", footer=FALSE, proc.time=FALSE, 
+               options = "-s", open=FALSE)

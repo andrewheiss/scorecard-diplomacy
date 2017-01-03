@@ -1,0 +1,40 @@
+
+------------------------------------------------------------------------------------------------------------------------------------------
+Statistic                                       Case study countries   Other countries   Difference   Significant difference at p = 0.05  
+----------------------------------------------- ---------------------- ----------------- ------------ ------------------------------------
+Tier                                            2.24                   2.02              0.219        Yes                                 
+
+Count of NGOs                                   3.3                    2.88              0.413        No                                  
+
+Count of IGOs                                   1.02                   0.802             0.213        No                                  
+
+TIP media coverage                              113                    89.5              23.1         Yes                                 
+
+Incidence (transit)                             0.933                  1.5               -0.563       No                                  
+
+Incidence (origin)                              2.2                    2.4               -0.195       No                                  
+
+Incidence (destination)                         2.4                    2.27              0.129        No                                  
+
+GDP per capita (constant 2000 dollars)          8,677                  6,973             1,704        No                                  
+
+Population                                      48,262,147             44,641,523        3,620,624    No                                  
+
+Corruption                                      2.13                   2.62              -0.485       Yes                                 
+
+Political rights                                3.98                   3.44              0.542        Yes                                 
+
+Aid (OECD)                                      14.5                   230               -215         No                                  
+
+Aid (US)                                        121                    96                24.8         No                                  
+
+Aid (US) per capita                             0.0000105              0.00000749        0.00000301   No                                  
+
+Ratification of 2000 TIP protocol               0.8                    0.791             0.00915      No                                  
+
+US TIP effort (proportion of Wikileaks cables   0.063                  0.0402            0.0228       Yes                                 
+mentioning TIP)                                                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------
+
+Table: Table A1.6: Comparison of case study countries and other countries in years they are included in the TIP Report.
+

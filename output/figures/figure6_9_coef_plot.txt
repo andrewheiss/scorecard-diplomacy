@@ -1,0 +1,3 @@
+Figure 6.9: Odds ratios of the variables representing scorecard diplomacy.
+Logit models of probability of criminalization in the next year. N = 758.
+Source: Author’s data. For full results, see the Results Appendix.
