@@ -922,7 +922,7 @@ no.crim.n <- paste0("Countries without full criminalization: ",
 
 fig6.4.n <- paste(full.partial.n, no.crim.n)
 
-caption <- c("Figure 6.4: Number of countries with domestic criminalization of human trafficking and number of countries included in the US Department of State TIP Report inclusion, 2000–2014. Highest possible score is eight.",
+caption <- c("Figure 6.4: Performance of countries on prevention and protection measures, 2000–2014. Highest possible score is eight.",
              fig6.4.n,
              "Source: Author’s data and Cho 2015.") %>%
   paste0(collapse="\n")
