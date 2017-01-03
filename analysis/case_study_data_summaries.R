@@ -160,7 +160,7 @@ timeline_case <- function(iso3) {
     geom_line() + 
     geom_vline(data=df.crim.plot, aes(xintercept=as.numeric(crim.year)),
                size=0.5, colour="grey50", linetype="dotted") +
-    labs(x=NULL, y="Cho policy index") +
+    labs(x=NULL, y="Anti-TIP policy index") +
     scale_y_continuous(limits=c(0, 15)) +
     coord_cartesian(xlim=ymd(c("2000-01-01", "2014-12-31"))) +
     theme_clean(10) + theme(panel.grid.minor.x=element_blank(),
