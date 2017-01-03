@@ -1530,7 +1530,7 @@ vars.all.prop.clean <- vars.all.prop %>%
 caption <- "Table A1.3: Description of all variables used in statistical analysis."
 filename <- "table_a1_3_var_descriptions.txt"
 cat(pandoc.table.return(vars.descriptions, caption=caption),
-    file=file.path(PROJHOME, "output", paste0(filename)))
+    file=file.path(PROJHOME, "output", "tables", paste0(filename)))
 
 Pandoc.convert(file.path(PROJHOME, "output", "tables", paste0(filename)),
                format="html", footer=FALSE, proc.time=FALSE, 
