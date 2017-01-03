@@ -111,9 +111,9 @@ total.row <- c("", "Total", sum(reactions.print$`Total reactions`),
 reactions.print <- rbind(reactions.print, total.row)
 
 # Save as Markdown table
-cat(pandoc.table.return(reactions.print, 
-                        split.tables=Inf, justify="llcccc"), 
-    file=file.path(PROJHOME, "output", "tables", "reactions.md"))
+# cat(pandoc.table.return(reactions.print, 
+#                         split.tables=Inf, justify="llcccc"), 
+#     file=file.path(PROJHOME, "output", "tables", "reactions.md"))
 
 
 # ------------
