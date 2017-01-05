@@ -1,7 +1,7 @@
 ---
 title: "Interactions by treatment"
-author: "Andrew Heiss"
-date: "`r format(Sys.time(), '%B %e, %Y')`"
+author: "Andrew Heiss and Judith Kelley"
+date: "2016-04-25 (last run `r format(Sys.time(), '%F')`)"
 fontsize: 10pt
 mainfont: "Source Sans Pro"
 output: 
