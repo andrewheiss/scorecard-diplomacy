@@ -4,7 +4,9 @@
 
 ---
 
-> Judith G. Kelley. 2017. *Scorecard Diplomacy: Grading States to Influence their Reputation and Behavior.* Cambridge: Cambridge University Press. (ISBN 978-1316649138)
+> Judith G. Kelley. 2017. *Scorecard Diplomacy: Grading States to Influence their Reputation and Behavior.* Cambridge: Cambridge University Press. (ISBN 978\-1316649138)
+
+---
 
 This repository contains all the code and data for Judith Kelley's [*Scorecard Diplomacy*](http://www.cambridge.org/se/academic/subjects/politics-international-relations/international-relations-and-international-organisations/scorecard-diplomacy-grading-states-influence-their-reputation-and-behavior) book project. 
 
