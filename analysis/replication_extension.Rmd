@@ -1,11 +1,11 @@
 ---
 title: "Replication and extension report"
-author: "Andrew Heiss"
-date: "`r format(Sys.time(), '%B %e, %Y')`"
+author: "Andrew Heiss and Judith Kelley"
+date: "2016-04-25 (last run `r format(Sys.time(), '%F')`)"
 fontsize: 10pt
 mainfont: "Source Sans Pro"
 output: 
-  pdf_document: 
+  pdf_document:
     highlight: pygments
     latex_engine: xelatex
     number_sections: yes
@@ -15,13 +15,21 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo=TRUE, cache=TRUE)
+knitr::opts_chunk$set(echo=TRUE, cache=TRUE, dev="cairo_pdf")
 library(tidyverse)
 library(stargazer)
 library(scales)
 library(gridExtra)
 
 source(file.path(PROJHOME, "analysis", "models_replication_extension.R"))
+source(file.path(PROJHOME, "shared_functions.R"))
+
+# By default, R uses polynomial contrasts for ordered factors in linear models
+# options("contrasts") 
+# So make ordered factors use treatment contrasts instead
+options(contrasts=rep("contr.treatment", 2))
+# Or do it on a single variable:
+# contrasts(df.incidence$ht_incidence_origin) <- "contr.treatment"
 ```
 
 # Overview
@@ -198,6 +206,8 @@ stargazer(model5.1, model5.2, model5.3, model5.4,
           notes=c("\\begin{varwidth}{3in}Standard errors in parentheses. All explanatory variables are lagged one period unless otherwise noted.\\end{varwidth}"))
 ```
 
+\newpage
+
 # Replication issues
 
 While doing this, I discovered a couple minor issues with the data and the modeling methods.
@@ -328,6 +338,8 @@ stargazer(model1.2, model1.2.good,
           notes.align="l", add.lines=extra.lines,
           notes=c("\\begin{varwidth}{3in}Robust standard errors in parentheses; values differ from published article because of differences in the robustness algorithms Stata and R use. All explanatory variables are lagged one period unless otherwise noted.\\end{varwidth}"))
 ```
+
+\newpage
 
 # Extension and new findings
 
@@ -780,7 +792,7 @@ stargazer(model.change, model.coverage, model.coverage1, model.coverage2,
           notes=c("\\begin{varwidth}{3in}All explanatory variables are lagged one period unless otherwise noted.\\end{varwidth}"))
 ```
 
-```{r, echo=FALSE, fig.width=4.5, fig.height=3, warning=FALSE}
+```{r, echo=FALSE, fig.width=4, fig.height=3, fig.align="center", warning=FALSE}
 std <- qnorm(0.95 / 2 + 0.5)
 model <- model.coverage
 
@@ -808,7 +820,7 @@ p.media.report <- ggplot(plot.predict, aes(x=inreport, y=pred)) +
   geom_pointrange(aes(ymax=pred.upper, ymin=pred.lower), size=.75,
                   position=position_dodge(width=0.25)) + 
   labs(x=NULL, y="Predicted number of TIP-related stories") + 
-  theme_light(10)
+  theme_clean(10)
 p.media.report
 
 ```
@@ -916,7 +928,182 @@ The chapter draft currently claims that the "relationship between being included
 
 Countries with worse freedom are around 10% more likely to enter the TIP report (Model 1.3: `r I(parens(model1.3, "fh_cl1", "z"))`), and in every model of criminalization, countries with worse freedom are 2–10% less likely to criminalize in a given year (Model 2.0: `r I(parens(ext2.0, "totalfreedom1", "z"))`). 
 
-## Extension conclusions
+
+## Predicting tier ratings with trafficking incidence
+
+The seriousness of trafficking in a country influences its tier rating. Countries are more likely to receive worse tier ratings when they act as either an origin or a destination country. This likely shows that the TIP report picks up on increases in the sending and receiving of trafficked people. Conversely, the report does not appear to condemn countries that see increases in transitory trafficking—these countries are more likely to receive better tier ratings as trafficking through their borders worsens. 
+
+```{r, echo=FALSE}
+incidence.levels <- c("Very low", "Low", "Medium", "High", "Very high")
+
+df.incidence <- df.complete %>%
+  filter(year > 2000) %>%
+  mutate_each(funs(factor = factor(., levels=1:5, 
+                                   labels=incidence.levels, 
+                                   ordered=TRUE)),
+              starts_with("ht_incidence"))
+
+df.summary <- df.incidence %>%
+  group_by(tier) %>%
+  summarise(asdf = n())
+
+# Models
+model.factor <- lm(tier ~ ht_incidence_origin_factor + 
+                     ht_incidence_transit_factor + 
+                     ht_incidence_destination_factor, data=df.incidence)
+
+model.numeric <- lm(tier ~ ht_incidence_origin + ht_incidence_transit + 
+                      ht_incidence_destination, data=df.incidence)
+
+model.full <- lm(tier ~ ht_incidence_origin + ht_incidence_transit + 
+                   ht_incidence_destination + 
+                   inreport + logpop + ngos_ave + totalfreedom + 
+                   corrected_regcrim + ratproto2000, data=df.incidence)
+```
+
+### Predict tier using simple model
+
+```{r, fig.width=5, fig.height=3, echo=FALSE}
+new.data.covars <- model.numeric$model %>%
+  summarise_each(funs(mean), -c(tier)) %>%
+  mutate(index = 1)
+
+new.data.origin <- data_frame(ht_incidence_origin = 1:5, index = 1) %>%
+  left_join(select(new.data.covars, -ht_incidence_origin), by="index") %>%
+  select(-index) %>%
+  augment(model.numeric, newdata=.) %>%
+  mutate(model = "Origin")
+
+new.data.transit <- data_frame(ht_incidence_transit = 1:5, index = 1) %>%
+  left_join(select(new.data.covars, -ht_incidence_transit), by="index") %>%
+  select(-index) %>%
+  augment(model.numeric, newdata=.) %>%
+  mutate(model = "Transit")
+
+new.data.destination <- data_frame(ht_incidence_destination = 1:5, index = 1) %>%
+  left_join(select(new.data.covars, -ht_incidence_destination), by="index") %>%
+  select(-index) %>%
+  augment(model.numeric, newdata=.) %>%
+  mutate(model = "Destination")
+
+plot.predict <- bind_rows(new.data.origin, new.data.transit, 
+                          new.data.destination) %>%
+  mutate(pred = .fitted,
+         pred.lower = pred + (qnorm(0.025) * .se.fit),
+         pred.upper = pred + (qnorm(0.975) * .se.fit),
+         model = factor(model, levels=c("Origin", "Transit", "Destination"),
+                        ordered=TRUE),
+         incidence = rep(1:5, 3))
+
+plot.incidence.pred <- ggplot(plot.predict, 
+                              aes(x=incidence, 
+                                  y=pred, colour=model)) + 
+  geom_ribbon(aes(ymin=pred.lower, ymax=pred.upper, fill=model), 
+              alpha=0.3, colour=NA) +
+  geom_line(size=1.5) + 
+  labs(x="Severity of trafficking incidence", 
+       y="Predicted tier") + 
+  scale_colour_manual(values=c("#004259", "#FC7300", "#BFDB3B"), name=NULL) +
+  scale_fill_manual(values=c("#004259", "#FC7300", "#BFDB3B"), 
+                    name=NULL, guide=FALSE) +
+  scale_x_continuous(labels=incidence.levels) +
+  scale_y_continuous(breaks=c(1, 2, 2.5, 3), 
+                     labels=c("Tier 1", "Tier 2", "Watch List", "Tier 3")) +
+  coord_cartesian(ylim=c(1, 3)) +
+  theme_clean() + 
+  theme(panel.grid.minor=element_blank(), legend.key=element_blank())
+plot.incidence.pred
+```
+
+### Predict tier using full model
+
+```{r, fig.width=5, fig.height=3, echo=FALSE}
+new.data.covars <- model.full$model %>%
+  summarise_each(funs(mean), -c(tier)) %>%
+  mutate(index = 1, inreport=1)
+
+new.data.origin <- data_frame(ht_incidence_origin = 1:5, index = 1) %>%
+  left_join(select(new.data.covars, -ht_incidence_origin), by="index") %>%
+  select(-index) %>%
+  augment(model.full, newdata=.) %>%
+  mutate(model = "Origin")
+
+new.data.transit <- data_frame(ht_incidence_transit = 1:5, index = 1) %>%
+  left_join(select(new.data.covars, -ht_incidence_transit), by="index") %>%
+  select(-index) %>%
+  augment(model.full, newdata=.) %>%
+  mutate(model = "Transit")
+
+new.data.destination <- data_frame(ht_incidence_destination = 1:5, index = 1) %>%
+  left_join(select(new.data.covars, -ht_incidence_destination), by="index") %>%
+  select(-index) %>%
+  augment(model.full, newdata=.) %>%
+  mutate(model = "Destination")
+
+plot.predict <- bind_rows(new.data.origin, new.data.transit,
+                          new.data.destination) %>%
+  mutate(pred = .fitted,
+         pred.lower = pred + (qnorm(0.025) * .se.fit),
+         pred.upper = pred + (qnorm(0.975) * .se.fit),
+         model = factor(model, levels=c("Origin", "Transit", "Destination"),
+                        ordered=TRUE),
+         incidence = rep(1:5, 3))
+
+plot.incidence.pred.full <- ggplot(plot.predict, 
+                                   aes(x=incidence, 
+                                       y=pred, colour=model)) + 
+  geom_ribbon(aes(ymin=pred.lower, ymax=pred.upper, fill=model), 
+              alpha=0.3, colour=NA) +
+  geom_line(size=1.5) + 
+  labs(x="Severity of trafficking incidence", 
+       y="Predicted tier") + 
+  scale_colour_manual(values=c("#004259", "#FC7300", "#BFDB3B"), name=NULL) +
+  scale_fill_manual(values=c("#004259", "#FC7300", "#BFDB3B"), 
+                    name=NULL, guide=FALSE) +
+  scale_x_continuous(labels=incidence.levels) +
+  scale_y_continuous(breaks=c(1, 2, 2.5, 3), 
+                     labels=c("Tier 1", "Tier 2", "Watch List", "Tier 3")) +
+  coord_cartesian(ylim=c(1, 3)) +
+  theme_clean() + 
+  theme(panel.grid.minor=element_blank(), legend.key=element_blank())
+plot.incidence.pred.full
+```
+
+### Full results from all models
+
+```{r, results='asis', echo=FALSE}
+var.labs <- c("Trafficking intensity in countries of origin", 
+              "Trafficking intensity in transit countries", 
+              "Trafficking intensity in destination countries",
+              "In TIP report", "Total population (logged)",
+              "NGO density", "Worse civil liberties", 
+              "Regional density of criminalization", 
+              "2000 TIP protocol ratification",
+              "Origin intensity (low)",
+              "Origin intensity (medium)",
+              "Origin intensity (high)",
+              "Origin intensity (very high)",
+              "Transit intensity (low)",
+              "Transit intensity (medium)",
+              "Transit intensity (high)",
+              "Transit intensity (very high)",
+              "Destination intensity (low)",
+              "Destination intensity (medium)",
+              "Destination intensity (high)",
+              "Destination intensity (very high)")
+col.labs <- c("Simple model", "Full model", "Simple with categorical intensity")
+
+stargazer(model.numeric, model.full, model.factor, 
+          covariate.labels=var.labs, column.labels=col.labs, 
+          model.numbers=FALSE, dep.var.labels.include=FALSE,
+          dep.var.caption="Tier rating", 
+          header=FALSE, type="latex",
+          font.size="footnotesize", no.space=TRUE, table.placement="H")
+```
+
+\newpage
+
+# Extension conclusions
 
 *Proposition: Countries with more TIP-specific funding from the US will criminalize faster.*
 
@@ -933,3 +1120,7 @@ Countries with worse freedom are around 10% more likely to enter the TIP report 
 *Proposition: The relationship between inclusion in the report and time to criminalization will be stronger for less democratic countries.*
 
 > Countries with worse civil rights and political liberties are more likely to enter the TIP report and less likely to criminalize trafficking. 
+
+*Proposition: The severity of trafficking in a country influences its tier rating.*
+
+> Countries are more likely to receive worse tier ratings when they act as either an origin or a destination country.
