@@ -2,13 +2,13 @@
 ---------------------------------------------------------
 Statistic                             Value              
 ------------------------------------- -------------------
-Average GDP per capita                $8,634.14          
+Average GDP per capita                $8,447.42          
 
-Total aid                             $7,341.52 million  
+Total aid                             $4,939.21 million  
 
-Aid from US                           $2,234.48 million  
+Aid from US                           $1,164.50 million  
 
-Average total aid as percent of GDP   0.0474%            
+Average total aid as percent of GDP   0.194%             
 
 Total TIP grants                      $968,140           
 ---------------------------------------------------------

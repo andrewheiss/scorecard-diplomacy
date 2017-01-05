@@ -25,11 +25,6 @@ cases <- c("ARM", "IDN", "ECU", "MOZ", "KAZ", "ARG", "ISR",
 # ------------------------
 # Load all sorts of data
 # ------------------------
-# Aid from AidData (processed in `extra_robustness_checks.R`)
-aid.us.total <- read_csv(file.path(PROJHOME, "data", "processed",
-                                   "aid_total.csv")) %>%
-  filter(year >= 2000, year < 2015)
-
 # TIP funding
 funding <- read_csv(file.path(PROJHOME, "data", "processed",
                               "funding_clean.csv")) %>%
@@ -39,7 +34,8 @@ funding <- read_csv(file.path(PROJHOME, "data", "processed",
   summarise(total.funding = sum(amount, na.rm=TRUE),
             avg.funding = mean(amount, na.rm=TRUE)) %>%
   group_by(iso) %>%
-  mutate(cum.funding = cumsum(total.funding))
+  mutate(cum.funding = cumsum(total.funding)) %>%
+  filter(grant_year > 2000, grant_year < 2014)
 
 
 # World Bank data
@@ -48,7 +44,7 @@ wdi.indicators <- c("NY.GDP.PCAP.KD",  # GDP per capita (constant 2005 US$)
                     "SP.POP.TOTL",     # Population, total
                     "DT.ODA.ALLD.KD")  # Net ODA and official aid received (constant 2013 US$)
 wdi.raw <- WDI(country=countrycode(cases, "iso3c", "iso2c"), wdi.indicators,
-               extra=TRUE, start=2000, end=2015)
+               extra=TRUE, start=2001, end=2013)
 
 wdi.clean <- wdi.raw %>%
   rename(gdpcap = NY.GDP.PCAP.KD, gdp = NY.GDP.MKTP.KD, 
@@ -61,7 +57,17 @@ wdi.clean <- wdi.raw %>%
   mutate(gdpcap.log = log(gdpcap), gdp.log = log(gdp),
          population.log = log(population)) %>%
   # Ignore negative values of oda
-  mutate(oda.log = sapply(oda, FUN=function(x) ifelse(x < 0, NA, log1p(x))))
+  mutate(oda.log = sapply(oda, FUN=function(x) ifelse(x < 0, NA, log1p(x)))) %>%
+  mutate(iso3c = as.character(iso3c))
+
+# Aid from AidData (processed in `extra_robustness_checks.R`)
+aid.us.total <- read_csv(file.path(PROJHOME, "data", "processed",
+                                   "aid_total.csv")) %>%
+  filter(year > 2000, year < 2014) %>%
+  left_join(select(wdi.clean, iso3c, year, gdp),
+            by=c("recipient.iso"="iso3c", "year")) %>%
+  mutate(aid.perc.gdp = aid.total / gdp)
+  
 
 # Policy index
 df.cho <- readRDS(file.path(PROJHOME, "data", "processed",
@@ -117,8 +123,8 @@ summarize_case <- function(iso3) {
   mean.gdp.cap <- mean(filter(wdi.clean, iso3c == iso3)$gdpcap, na.rm=TRUE)
   total.aid <- sum(filter(aid.us.total, recipient.iso == iso3)$aid.total, na.rm=TRUE) / 1000000
   us.aid <- sum(filter(aid.us.total, recipient.iso == iso3)$aid.us, na.rm=TRUE) / 1000000
-  mean.oda.gdp <-  mean(filter(wdi.clean, iso3c == iso3)$oda.gdp, na.rm=TRUE)
-  mean.oda.gdp <- ifelse(is.nan(mean.oda.gdp), 0, mean.oda.gdp)  # Hi Japan
+  mean.oda.gdp <- mean(filter(aid.us.total, recipient.iso == iso3)$aid.perc.gdp, na.rm=TRUE)
+  mean.oda.gdp <- ifelse(mean.oda.gdp < 0.00001, 0, mean.oda.gdp)  # Hi Japan
   total.tip.grants <- sum(filter(funding, iso == iso3)$total.funding, na.rm=TRUE)
   
   rows <- c("Average GDP per capita", "Total aid", "Aid from US",

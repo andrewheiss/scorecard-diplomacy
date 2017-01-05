@@ -2,7 +2,7 @@
 -----------------------------------------------------
 Statistic                             Value          
 ------------------------------------- ---------------
-Average GDP per capita                $42,470.56     
+Average GDP per capita                $42,333.27     
 
 Total aid                             $0.12 million  
 
