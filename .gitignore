@@ -2,3 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+
+analysis/**_files/*
+analysis/**_cache/*
+analysis/*.pdf
