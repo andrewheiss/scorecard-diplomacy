@@ -6,3 +6,6 @@
 analysis/**_files/*
 analysis/**_cache/*
 analysis/*.pdf
+
+# Keep full survey data anonymous
+survey/responses_full.rds
