@@ -22,7 +22,7 @@ theme_clean <- function(base_size=12, base_family="Source Sans Pro Light") {
           axis.title.x = element_text(margin = margin(t = 10)),
           title=element_text(vjust=1.2, family="Source Sans Pro Semibold"),
           panel.border = element_blank(), 
-          axis.line=element_line(colour="grey50", size=0.2),
+          axis.line=element_blank(),
           #panel.grid=element_blank(), 
           axis.ticks=element_blank(),
           legend.position="bottom", 
