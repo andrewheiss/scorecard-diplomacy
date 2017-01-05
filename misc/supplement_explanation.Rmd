@@ -1,0 +1,41 @@
+---
+title: "Description of supplementary information"
+author: "Judith Kelley and Andrew Heiss"
+date: "2017-01-05"
+mainfont: "Source Sans Pro"
+monofont: "Consolas"
+fontsize: 11pt
+linkcolor: red
+urlcolor: red
+output: 
+  pdf_document:
+    latex_engine: xelatex
+    md_extensions: -autolink_bare_uris
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This supplement contains all the code, data, and other essential analytical materials used in *Scorecard Diplomacy*. 
+
+- **Code**: The code for the project is available in a version-controlled repository at [GitHub](https://github.com/andrewheiss/scorecard-diplomacy).[^1] All the results, figures, and tables in the book can be recreated using [R](https://www.r-project.org/) (preferably within [RStudio](https://www.rstudio.com/), since the code is structured as an [RStudio project](https://support.rstudio.com/hc/en-us/articles/200526207-Using-Projects)).
+- **Data**: The data for the project is also available the online code repository in the `/data/` subdirectory.[^2]
+- **Case studies**: More detailed analysis of the project's fifteen case studies is included in the `/Case studies/` subdirectory within this supplement. This directory includes the following files:
+	- `DESCRIBE STUFF HERE`
+- **Content analysis**: All documents and data related to the coding of TIP-related Wikileaks cables are included in the `/Content analysis/` subdirectory within this supplement. This directory includes the following files:
+	- `DESCRIBE STUFF HERE`
+- **Survey**: Documents and data related to the anti-TIP NGO survey are included in the `/Survey/` subdirectory within this supplement. This directory includes the following files:
+	- `Report for NGO respondents.pdf`: A brief summary of the survey results sent to NGO respondents in May 2014
+	- `Report raw summary.pdf`: A raw summary of the results for each survey question[^3]
+	- `Survey invitation and text/`: The text of the NGO survey and the e-mail invitation sent to potential respondents
+	- `Survey data/`: Survey responses in both CSV and RDS format (for R). The free response answers for respondents who requested anonymity have been redacted.[^4]
+
+
+[^1]:	[https://github.com/andrewheiss/scorecard-diplomacy](https://github.com/andrewheiss/scorecard-diplomacy)
+
+[^2]:	[https://github.com/andrewheiss/scorecard-diplomacy/tree/master/data](https://github.com/andrewheiss/scorecard-diplomacy/tree/master/data)
+
+[^3]:	This summary was generated with code available at [https://github.com/andrewheiss/Human-trafficking-NGO-survey](https://github.com/andrewheiss/Human-trafficking-NGO-survey)
+
+[^4]:	The code to clean and process this data is available in the repository for Andrew Heiss and Judith G. Kelley. 2016. “From the Trenches: A Global Survey of Anti-TIP NGOs and their Views of US Efforts.” *Journal of Human Trafficking*. doi:`10.1080/23322705.2016.1199241` at GitHub: [https://github.com/andrewheiss/From-the-Trenches-Anti-TIP-NGOs-and-US](https://github.com/andrewheiss/From-the-Trenches-Anti-TIP-NGOs-and-US)

@@ -9,3 +9,5 @@ analysis/*.pdf
 
 # Keep full survey data anonymous
 survey/responses_full.rds
+
+misc/*.pdf
