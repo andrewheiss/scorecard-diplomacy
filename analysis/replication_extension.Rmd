@@ -39,7 +39,7 @@ options(contrasts=rep("contr.treatment", 2))
 
 # Overview
 
-Much of the statisitical work in *Scorecard Diplomacy* is based on the models in Judith G. Kelley and Beth A. Simmons. 2015. “Politics by Number: Indicators as Social Pressure in International Relations.” *American Journal of Political Science* 59, no. 1 (January): 55–70. doi:[10.1111/ajps.12119](http://dx.doi.org/10.1111/ajps.12119). The models in the article were created using Stata, and to ensure that the R-based results for the book were comparable, we first replicated the results from the article before expanding the models for the book's larger scope.
+Much of the statisitical work in *Scorecard Diplomacy* is based on the models in Judith G. Kelley and Beth A. Simmons. 2015. “Politics by Number: Indicators as Social Pressure in International Relations.” *American Journal of Political Science* 59, no. 1 (January): 55–70. [doi:10.1111/ajps.12119](http://dx.doi.org/10.1111/ajps.12119). The models in the article were created using Stata, and to ensure that the R-based results for the book were comparable, we first replicated the results from the article before expanding the models for the book's larger scope.
 
 In the interest of transparency, this file shows the replicated results as well as the various iterations of expanded models that preceded the models that ultimately made it into the book.
 
