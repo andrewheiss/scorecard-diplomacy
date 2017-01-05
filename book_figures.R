@@ -37,7 +37,7 @@ library(pander)
 
 source(file.path(PROJHOME, "shared_functions.R"))
 
-# Disaple readr's column type messages
+# Disable readr's column type messages
 options("readr.num_columns"=0)
 # panderOptions('pandoc.binary', '/Users/andrew/.cabal/bin/pandoc')
 
