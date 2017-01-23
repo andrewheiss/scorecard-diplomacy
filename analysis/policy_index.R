@@ -137,7 +137,9 @@ plot.data <- p.index %>%
   mutate(p.while.in.tip = ifelse(in.report == TRUE, p, NA))
 
 plot.baselines <- plot.data %>%
-  filter(year == min(year[in.report]))
+  filter(in.report) %>%
+  group_by(iso) %>%
+  slice(1)
 
 year.criminalized.subset <- read_stata(file.path(PROJHOME, "data", "original", 
                                                  "criminalization_jk_2015-08-10.dta")) %>%
