@@ -805,6 +805,7 @@ coef.plot <- ggplot(plot.data, aes(y=clean.name, x=estimate,
                    position=position_dodgev(height=.7)) + 
   scale_colour_manual(values=c("grey70", "black", "black"), name="") +
   scale_shape_manual(values=c(19, 19, 17), name="") +
+  scale_x_continuous(breaks=seq(-10, 10, 2)) +
   coord_cartesian(xlim=c(0, 10)) +
   labs(x="Odds ratio", y=NULL) +
   theme_clean(10) + theme(legend.key.width=unit(2, "line"),
