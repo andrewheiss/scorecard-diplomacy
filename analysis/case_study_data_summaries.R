@@ -11,7 +11,7 @@ library(gridExtra)
 library(ggrepel)
 library(scales)
 library(pander)
-panderOptions('pandoc.binary', '/Users/andrew/.cabal/bin/pandoc')
+# panderOptions('pandoc.binary', '/Users/andrew/.cabal/bin/pandoc')
 panderOptions('table.split.table', Inf)
 panderOptions('table.split.cells', Inf)
 panderOptions('table.alignment.default', 'left')
@@ -75,11 +75,7 @@ df.cho <- readRDS(file.path(PROJHOME, "data", "processed",
   mutate(year.actual = ymd(paste0(year, "-01-01"))) %>%
   filter(iso %in% cases) %>%
   # To get the tiers evenly spaced on the y axis, convert watchlist 2.5 to 3 and tier 3 to 4
-  mutate(tier.even = case_when(
-    .$tier == 3 ~ 4,
-    .$tier == 2.5 ~ 3,
-    TRUE ~ .$tier
-  ))
+  mutate(tier.even = recode(tier, `3` = 4, `2.5` = 3))
 
 df.crim.orig <- df.cho %>%
   group_by(iso) %>%
