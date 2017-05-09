@@ -8,7 +8,7 @@
 
 ---
 
-This repository contains all the code and data for Judith Kelley's [*Scorecard Diplomacy*](http://www.cambridge.org/se/academic/subjects/politics-international-relations/international-relations-and-international-organisations/scorecard-diplomacy-grading-states-influence-their-reputation-and-behavior) book project. 
+This repository contains all the code and data for Judith Kelley's [*Scorecard Diplomacy*](https://www.scorecarddiplomacy.org) book project. 
 
 The commit history for each file is truncated, however. Heavy development on the code occurred in a [separate repository](https://github.com/andrewheiss/jk_misc) between August 2015 and September 2016, but that repository was poorly structured, could not be run cleanly, and contained code for other projects. This repository was created as a simpler, fully reproducible, standalone repository. Those interested in the full development history of each file can visit the [`jk_misc`](https://github.com/andrewheiss/jk_misc) repository.
 
